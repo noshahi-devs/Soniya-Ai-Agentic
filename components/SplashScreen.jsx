@@ -13,6 +13,12 @@ const SplashScreen = ({ onFinish }) => {
     const textFadeAnim = useRef(new Animated.Value(0)).current;
 
     useEffect(() => {
+        const subtitleTimer = setTimeout(() => {
+            Animated.timing(textFadeAnim, { toValue: 1, duration: 1000, useNativeDriver: true }).start();
+        }, 1200);
+
+        const finishTimer = setTimeout(onFinish, 5000);
+
         // Step 1: Logo enters
         Animated.parallel([
             Animated.timing(fadeAnim, { toValue: 1, duration: 1500, useNativeDriver: true }),
@@ -20,13 +26,11 @@ const SplashScreen = ({ onFinish }) => {
             Animated.timing(rotateAnim, { toValue: 1, duration: 2500, useNativeDriver: true }),
         ]).start();
 
-        // Step 2: Show Subtitle
-        setTimeout(() => {
-            Animated.timing(textFadeAnim, { toValue: 1, duration: 1000, useNativeDriver: true }).start();
-        }, 1200);
-
-        setTimeout(onFinish, 5000);
-    }, []);
+        return () => {
+            clearTimeout(subtitleTimer);
+            clearTimeout(finishTimer);
+        };
+    }, [fadeAnim, onFinish, rotateAnim, scaleAnim, textFadeAnim]);
 
     const spin = rotateAnim.interpolate({
         inputRange: [0, 1],

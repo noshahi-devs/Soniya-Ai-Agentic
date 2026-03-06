@@ -1,5 +1,5 @@
 import { Audio } from 'expo-av';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef } from 'react';
 
 const moodMusic = {
     LOVE: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3', // Example links
@@ -8,22 +8,38 @@ const moodMusic = {
 };
 
 const AmbientMusic = ({ mood }) => {
-    const [sound, setSound] = useState();
-
-    async function playSound() {
-        if (sound) await sound.unloadAsync();
-
-        const { sound: newSound } = await Audio.Sound.createAsync(
-            { uri: moodMusic[mood] || moodMusic.HAPPY },
-            { shouldPlay: true, isLooping: true, volume: 0.2 } // Volume halka rakha hai
-        );
-        setSound(newSound);
-    }
+    const soundRef = useRef(null);
 
     useEffect(() => {
+        let mounted = true;
+        let currentSound;
+
+        const playSound = async () => {
+            if (soundRef.current) {
+                await soundRef.current.unloadAsync();
+            }
+
+            const { sound: newSound } = await Audio.Sound.createAsync(
+                { uri: moodMusic[mood] || moodMusic.HAPPY },
+                { shouldPlay: true, isLooping: true, volume: 0.2 }
+            );
+
+            currentSound = newSound;
+
+            if (mounted) {
+                soundRef.current = newSound;
+            } else {
+                await newSound.unloadAsync();
+            }
+        };
+
         playSound();
+
         return () => {
-            if (sound) sound.unloadAsync();
+            mounted = false;
+            if (currentSound) {
+                currentSound.unloadAsync();
+            }
         };
     }, [mood]);
 

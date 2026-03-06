@@ -1,10 +1,10 @@
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import AgentStepTwoScreen from './src/screens/AgentStepTwoScreen';
+import SoniyaCompanionScreen from './src/screens/SoniyaCompanionScreen';
 
 export default function App() {
   return (
     <SafeAreaProvider>
-      <AgentStepTwoScreen />
+      <SoniyaCompanionScreen />
     </SafeAreaProvider>
   );
 }

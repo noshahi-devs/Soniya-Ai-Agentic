@@ -58,3 +58,30 @@
 ### Next
 - Verify Step 3 in Expo Go and the Android dev build.
 - Stage 4: start Expo prebuild/native Android integration for notification listener and background service.
+
+## 2026-03-07
+
+### Companion UI Refresh
+- Replaced the old card-heavy entry screen with a new avatar-first companion screen.
+- Promoted `SoniyaAvatar` to the main experience so Soniya stays visible on the home screen.
+- Moved inbox, PIN, settings, and runtime details into a separate utility screen that opens on demand.
+- Kept the message privacy flow available, but removed it from the main UI so the home screen stays focused.
+
+### Conversation Wiring
+- Added `src/services/assistantRouter.js` to route user input across:
+  - local memory commands
+  - protected message commands
+  - general AI conversation
+- Wired typed prompts and captured speech into the same conversation flow.
+- Upgraded spoken replies so the home-screen avatar can react while Soniya is speaking.
+
+### Project Cleanup
+- Removed unused Expo template files that were causing lint failures.
+- Fixed existing hook warnings in `components/AmbientMusic.jsx` and `components/SplashScreen.jsx`.
+
+### Verification
+- `cmd /c npm run lint`
+- `cmd /c npx expo export --platform web`
+
+### Current Note
+- General conversation is now wired, but live microphone capture still depends on running the app in a development build because `expo-speech-recognition` uses custom native code.

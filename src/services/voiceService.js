@@ -66,7 +66,7 @@ export const getVoiceRuntimeSnapshot = async () => {
   };
 };
 
-export const speakAssistantResponse = (text, settings = {}) => {
+export const speakAssistantResponse = (text, settings = {}, callbacks = {}) => {
   const sanitized = sanitizeSpokenText(text);
   if (!sanitized) {
     return false;
@@ -76,7 +76,7 @@ export const speakAssistantResponse = (text, settings = {}) => {
     return false;
   }
 
-  soniyaSpeak(sanitized, undefined, undefined, {
+  soniyaSpeak(sanitized, callbacks.onStart, callbacks.onEnd, {
     rate: 0.98,
   });
 
