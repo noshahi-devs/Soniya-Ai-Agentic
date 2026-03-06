@@ -1,10 +1,10 @@
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import AgentHomeScreen from './src/screens/AgentHomeScreen';
+import AgentStepTwoScreen from './src/screens/AgentStepTwoScreen';
 
 export default function App() {
   return (
     <SafeAreaProvider>
-      <AgentHomeScreen />
+      <AgentStepTwoScreen />
     </SafeAreaProvider>
   );
 }

@@ -6,6 +6,7 @@ const NO_PATTERNS = ['no', 'nahi', 'ignore', 'skip'];
 const SEND_PATTERNS = ['send', 'bhej do', 'message bhej do', 'confirm send'];
 
 const hasAnyPhrase = (text, phrases) => phrases.some((phrase) => text.includes(phrase));
+const matchesStandalonePhrase = (text, phrases) => phrases.some((phrase) => text === phrase);
 
 export const QUICK_COMMANDS = [
   'Soniya open karo',
@@ -26,14 +27,6 @@ export const detectIntent = (inputText, messages = []) => {
   const pinMatch = normalized.match(/(?:pin\s*)?(\d{4,})/);
   if (pinMatch) {
     return { type: 'VERIFY_PIN', rawText: originalText, pin: pinMatch[1] };
-  }
-
-  if (hasAnyPhrase(normalized, YES_PATTERNS)) {
-    return { type: 'CONFIRM_READ_LATEST', rawText: originalText };
-  }
-
-  if (hasAnyPhrase(normalized, NO_PATTERNS)) {
-    return { type: 'IGNORE_MESSAGE', rawText: originalText };
   }
 
   if (normalized.includes('reply bhejo') || normalized.includes('reply karo') || normalized.includes('jawab bhejo')) {
@@ -81,6 +74,14 @@ export const detectIntent = (inputText, messages = []) => {
 
   if (normalized.includes('new message') || normalized.includes('latest message') || normalized.includes('message sunao') || normalized.includes('message read karo')) {
     return { type: 'READ_LATEST_MESSAGE', rawText: originalText };
+  }
+
+  if (matchesStandalonePhrase(normalized, YES_PATTERNS)) {
+    return { type: 'CONFIRM_READ_LATEST', rawText: originalText };
+  }
+
+  if (matchesStandalonePhrase(normalized, NO_PATTERNS)) {
+    return { type: 'IGNORE_MESSAGE', rawText: originalText };
   }
 
   const senderNames = messages.map((message) => message.sender);

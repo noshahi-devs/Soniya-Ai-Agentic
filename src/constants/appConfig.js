@@ -1,6 +1,6 @@
 export const APP_NAME = 'Soniya Agentic AI';
 export const APP_TAGLINE = 'Privacy-first romantic and friendly AI companion for Android';
-export const APP_STAGE = 'Stage 2: Local intent and privacy flows';
+export const APP_STAGE = 'Stage 3 Complete: Voice command flow and spoken responses';
 export const DEMO_OWNER_PIN = '1598';
 
 export const DEFAULT_SETTINGS = {
@@ -116,13 +116,13 @@ export const ROADMAP = [
   },
   {
     title: 'Stage 2',
-    status: 'In progress now',
-    detail: 'Add local message rules, PIN-gated flows, and intent handling.',
+    status: 'Completed',
+    detail: 'Local message rules, PIN-gated flows, and the Expo command-center workflow are now active.',
   },
   {
     title: 'Stage 3',
-    status: 'Pending',
-    detail: 'Connect voice commands and spoken confirmation flows.',
+    status: 'Completed',
+    detail: 'Mic-driven command capture and spoken assistant replies are wired with a dev-build fallback strategy.',
   },
   {
     title: 'Stage 4',
