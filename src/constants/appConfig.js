@@ -1,6 +1,6 @@
 export const APP_NAME = 'Soniya Agentic AI';
 export const APP_TAGLINE = 'Privacy-first romantic and friendly AI companion for Android';
-export const APP_STAGE = 'Stage 1: Expo foundation';
+export const APP_STAGE = 'Stage 2: Local intent and privacy flows';
 export const DEMO_OWNER_PIN = '1598';
 
 export const DEFAULT_SETTINGS = {
@@ -111,12 +111,12 @@ export const COMPANION_PERSONA = {
 export const ROADMAP = [
   {
     title: 'Stage 1',
-    status: 'In progress now',
+    status: 'Completed',
     detail: 'Rebrand the app, build the Expo shell, and lock the design toward local-first behavior.',
   },
   {
     title: 'Stage 2',
-    status: 'Next',
+    status: 'In progress now',
     detail: 'Add local message rules, PIN-gated flows, and intent handling.',
   },
   {

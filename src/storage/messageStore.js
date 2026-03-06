@@ -9,6 +9,9 @@ const DEFAULT_INBOX = [
     sender: 'Nabeel',
     body: 'Ab kab mil sakte ho?',
     receivedAt: 'Today 08:15 AM',
+    isRead: false,
+    lastReplyText: '',
+    repliedAt: '',
   },
   {
     id: 'msg-002',
@@ -16,6 +19,9 @@ const DEFAULT_INBOX = [
     sender: 'Ahmad',
     body: 'Meeting 3 baje confirm kar dein.',
     receivedAt: 'Today 07:42 AM',
+    isRead: false,
+    lastReplyText: '',
+    repliedAt: '',
   },
   {
     id: 'msg-003',
@@ -23,10 +29,24 @@ const DEFAULT_INBOX = [
     sender: 'Ali',
     body: 'Kal office kab aana hai?',
     receivedAt: 'Yesterday 09:30 PM',
+    isRead: false,
+    lastReplyText: '',
+    repliedAt: '',
   },
 ];
 
-const cloneInbox = (messages = DEFAULT_INBOX) => messages.map((message) => ({ ...message }));
+const normalizeMessage = (message = {}) => ({
+  id: message.id || `msg-${Math.random().toString(36).slice(2, 10)}`,
+  app: message.app || 'WhatsApp',
+  sender: message.sender || 'Unknown sender',
+  body: message.body || '',
+  receivedAt: message.receivedAt || 'Unknown time',
+  isRead: Boolean(message.isRead),
+  lastReplyText: message.lastReplyText || '',
+  repliedAt: message.repliedAt || '',
+});
+
+const cloneInbox = (messages = DEFAULT_INBOX) => messages.map((message) => normalizeMessage(message));
 
 export const loadLocalInbox = async () => {
   try {
@@ -43,6 +63,60 @@ export const loadLocalInbox = async () => {
     return cloneInbox();
   }
 };
+
+export const saveLocalInbox = async (messages) => {
+  const normalizedInbox = cloneInbox(messages);
+  await AsyncStorage.setItem(INBOX_STORAGE_KEY, JSON.stringify(normalizedInbox));
+  return normalizedInbox;
+};
+
+export const getSenderNames = (messages = []) => {
+  const uniqueNames = [];
+
+  messages.forEach((message) => {
+    if (!uniqueNames.includes(message.sender)) {
+      uniqueNames.push(message.sender);
+    }
+  });
+
+  return uniqueNames;
+};
+
+const normalizeSearchText = (value = '') => value.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+
+export const findMessageById = (messages = [], messageId = '') => (
+  messages.find((message) => message.id === messageId) || null
+);
+
+export const findMessageBySender = (messages = [], senderQuery = '') => {
+  const normalizedQuery = normalizeSearchText(senderQuery);
+  if (!normalizedQuery) {
+    return null;
+  }
+
+  return messages.find((message) => normalizeSearchText(message.sender).includes(normalizedQuery)) || null;
+};
+
+export const markMessageRead = (messages = [], messageId = '') => (
+  cloneInbox(messages).map((message) => (
+    message.id === messageId
+      ? { ...message, isRead: true }
+      : message
+  ))
+);
+
+export const attachReplyToMessage = (messages = [], messageId = '', replyText = '') => (
+  cloneInbox(messages).map((message) => (
+    message.id === messageId
+      ? {
+        ...message,
+        isRead: true,
+        lastReplyText: replyText,
+        repliedAt: 'Just now',
+      }
+      : message
+  ))
+);
 
 export const buildAnnouncement = (message, romanticTone = true) => {
   if (!message) return 'No message detected yet.';
