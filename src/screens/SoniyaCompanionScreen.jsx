@@ -2,7 +2,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { startTransition, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Keyboard,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -10,20 +13,37 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  getCompanionProfilePrompt,
+  lockLocalMemorySecuritySession,
+  syncLocalMemorySecurityPin,
+} from '../../api/localMemory';
 import SoniyaAvatar from '../../components/SoniyaAvatar';
 import VoiceHandler from '../../components/VoiceHandler';
-import { QUICK_COMMANDS } from '../ai/intentEngine';
 import {
   APP_NAME,
   DEFAULT_SETTINGS,
   PRIVACY_RULES,
   SETTING_DEFINITIONS,
 } from '../constants/appConfig';
-import { createInitialAgentSession } from '../services/messageHandler';
 import { routeAssistantInput } from '../services/assistantRouter';
+import { createInitialAgentSession } from '../services/messageHandler';
+import {
+  clearCapturedNotifications,
+  getCapturedNotifications,
+  getNativeBridgeStatus,
+  hideFloatingBubble,
+  isNativeStageFourBridgeAvailable,
+  openNotificationListenerSettings,
+  requestNativeNotificationRebind,
+  showFloatingBubble,
+  startNativeAssistantService,
+  stopAssistantService,
+} from '../services/nativeAssistantService';
 import {
   getVoiceRuntimeSnapshot,
   initializeVoicePersona,
@@ -34,17 +54,19 @@ import {
   findMessageById,
   getSuggestedReplies,
   loadLocalInbox,
+  mergeNativeNotificationsIntoInbox,
   saveLocalInbox,
 } from '../storage/messageStore';
 import {
   DEFAULT_PRIVACY_STATE,
+  buildLockedPrivacyState,
+  isDefaultPrivacyPin,
   isPrivacyUnlocked,
   loadPrivacyState,
   savePrivacyState,
+  updatePrivacyPin,
 } from '../storage/privacyStorage';
 import { loadAgentSettings, saveAgentSettings } from '../storage/settingsStorage';
-
-const QUICK_HOME_COMMANDS = QUICK_COMMANDS.slice(0, 3);
 
 const createChatEntry = (role, text, meta = {}) => ({
   id: `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -55,7 +77,7 @@ const createChatEntry = (role, text, meta = {}) => ({
 
 const buildWelcomeText = (hasVoiceRuntime) => (
   hasVoiceRuntime
-    ? 'Main ready hoon. Mujh se baat karein, messages poochhein, ya mic se bolo.'
+    ? 'Main ready hoon. Mujh se baat karein, messages poochhein, ya mic se bolo, main sunti hoon.'
     : 'Main ready hoon. Text chat abhi kaam karegi; live mic ke liye dev build chahiye.'
 );
 
@@ -120,12 +142,25 @@ export default function SoniyaCompanionScreen() {
   const [statusText, setStatusText] = useState('Soniya is waking up...');
   const [composerText, setComposerText] = useState('');
   const [pinInput, setPinInput] = useState('');
+  const [currentPinDraft, setCurrentPinDraft] = useState('');
+  const [newPinDraft, setNewPinDraft] = useState('');
+  const [confirmPinDraft, setConfirmPinDraft] = useState('');
   const [conversation, setConversation] = useState([]);
   const [isThinking, setIsThinking] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [assistantMood, setAssistantMood] = useState('HAPPY');
   const [activityMode, setActivityMode] = useState('CHAT');
   const [utilityVisible, setUtilityVisible] = useState(false);
+  const [nativeBridgeStatus, setNativeBridgeStatus] = useState({
+    bridgeAvailable: false,
+    notificationAccessEnabled: false,
+    listenerConnected: false,
+    listenerConnectedAt: 0,
+    foregroundServiceActive: false,
+    foregroundServiceStartedAt: 0,
+    storedCount: 0,
+  });
+  const [nativeNotifications, setNativeNotifications] = useState([]);
 
   const settingsRef = useRef(settings);
   const messagesRef = useRef(messages);
@@ -152,11 +187,12 @@ export default function SoniyaCompanionScreen() {
     let isMounted = true;
 
     const hydrate = async () => {
-      const [storedSettings, storedMessages, storedPrivacyState, runtimeSnapshot] = await Promise.all([
+      const [storedSettings, storedMessages, storedPrivacyState, runtimeSnapshot, companionProfilePrompt] = await Promise.all([
         loadAgentSettings(),
         loadLocalInbox(),
         loadPrivacyState(),
         getVoiceRuntimeSnapshot(),
+        getCompanionProfilePrompt(),
       ]);
 
       if (!isMounted) {
@@ -164,14 +200,22 @@ export default function SoniyaCompanionScreen() {
       }
 
       const welcomeText = buildWelcomeText(runtimeSnapshot.recognitionAvailable);
+      const initialPrompt = String(companionProfilePrompt || '').trim();
+      const initialConversation = [createChatEntry('assistant', welcomeText, { kind: 'welcome' })];
+      if (initialPrompt) {
+        initialConversation.push(createChatEntry('assistant', initialPrompt, { kind: 'profile_prompt' }));
+      }
 
       setSettings(storedSettings);
+      if (storedSettings.showFloatingBubble) {
+        await showFloatingBubble();
+      }
       setMessages(storedMessages);
       setPrivacyState(storedPrivacyState);
       setAgentSession(createInitialAgentSession(storedMessages));
       setVoiceRuntime(runtimeSnapshot);
-      setStatusText(welcomeText);
-      setConversation([createChatEntry('assistant', welcomeText, { kind: 'welcome' })]);
+      setStatusText(initialPrompt || welcomeText);
+      setConversation(initialConversation);
       setVoiceStatusText(
         runtimeSnapshot.recognitionAvailable
           ? 'Mic ready hai. Voice input dev build mein test karein.'
@@ -180,24 +224,45 @@ export default function SoniyaCompanionScreen() {
     };
 
     hydrate();
-    initializeVoicePersona().catch(() => {});
+    initializeVoicePersona().catch(() => { });
 
     return () => {
       isMounted = false;
     };
   }, []);
 
+  const refreshNativeBridgeState = async () => {
+    const [statusSnapshot, notificationSnapshot] = await Promise.all([
+      getNativeBridgeStatus(),
+      getCapturedNotifications(),
+    ]);
+
+    setNativeBridgeStatus(statusSnapshot);
+    setNativeNotifications(Array.isArray(notificationSnapshot) ? notificationSnapshot : []);
+  };
+
+  useEffect(() => {
+    refreshNativeBridgeState().catch(() => { });
+  }, []);
+
+  useEffect(() => {
+    if (!utilityVisible) {
+      return;
+    }
+
+    refreshNativeBridgeState().catch(() => { });
+  }, [utilityVisible]);
+
   const latestMessage = messages[0] || null;
   const unreadCount = messages.filter((message) => !message.isRead).length;
   const sessionUnlocked = isPrivacyUnlocked(privacyState);
+  const defaultPinActive = isDefaultPrivacyPin(privacyState);
   const selectedMessage = findMessageById(messages, agentSession.selectedMessageId) || latestMessage;
   const announcementText = buildAnnouncement(latestMessage, Boolean(settings.romanticCompanionMode));
   const suggestedReplies = getSuggestedReplies(selectedMessage, Boolean(settings.romanticCompanionMode));
   const displayedConversation = useMemo(() => conversation.slice(-6), [conversation]);
-  const voiceModeLabel = voiceRuntime.recognitionAvailable ? 'Mic ready' : 'Text mode';
-  const voiceHintLabel = voiceRuntime.recognitionAvailable
-    ? 'Tap mic and speak'
-    : 'Dev build required for mic';
+  const nativeBridgeAvailable = isNativeStageFourBridgeAvailable();
+  const stageFourStatusLabel = nativeBridgeAvailable ? 'Native bridge ready' : 'Run Android dev build after prebuild';
 
   const appendConversation = (...entries) => {
     const cleanEntries = entries.filter((entry) => entry?.text);
@@ -219,6 +284,60 @@ export default function SoniyaCompanionScreen() {
     settingsRef.current = nextSettings;
     setSettings(nextSettings);
     await saveAgentSettings(nextSettings);
+
+    // Handle Native Side-Effects
+    if (key === 'showFloatingBubble') {
+      if (value) {
+        await showFloatingBubble();
+      } else {
+        await hideFloatingBubble();
+      }
+    }
+
+    if (key === 'assistantActive') {
+      if (value) {
+        await startNativeAssistantService();
+        if (settingsRef.current.showFloatingBubble) {
+          await showFloatingBubble();
+        }
+      } else {
+        await hideFloatingBubble();
+        await stopAssistantService();
+      }
+    }
+  };
+
+  const lockPrivacyNow = async () => {
+    const lockedPrivacyState = await savePrivacyState(buildLockedPrivacyState(privacyStateRef.current));
+    await lockLocalMemorySecuritySession();
+    privacyStateRef.current = lockedPrivacyState;
+    setPrivacyState(lockedPrivacyState);
+    setStatusText('Privacy lock ab dobara active hai.');
+    setAssistantMood('HAPPY');
+  };
+
+  const updateOwnerPin = async () => {
+    const updateResult = updatePrivacyPin(privacyStateRef.current, {
+      currentPin: currentPinDraft,
+      nextPin: newPinDraft,
+      confirmPin: confirmPinDraft,
+    });
+
+    if (!updateResult.ok) {
+      setStatusText(updateResult.message || 'PIN update nahi ho saka.');
+      setAssistantMood('SAD');
+      return;
+    }
+
+    const savedPrivacyState = await savePrivacyState(updateResult.state);
+    privacyStateRef.current = savedPrivacyState;
+    setPrivacyState(savedPrivacyState);
+    await syncLocalMemorySecurityPin(newPinDraft);
+    setCurrentPinDraft('');
+    setNewPinDraft('');
+    setConfirmPinDraft('');
+    setStatusText(updateResult.message || 'PIN update ho gaya hai.');
+    setAssistantMood('HAPPY');
   };
 
   const applyAssistantResult = async (result) => {
@@ -320,6 +439,26 @@ export default function SoniyaCompanionScreen() {
     );
   };
 
+  const syncNativeNotifications = async () => {
+    const latestNativeNotifications = await getCapturedNotifications();
+    const mergedInbox = mergeNativeNotificationsIntoInbox(messagesRef.current, latestNativeNotifications);
+    const savedInbox = await saveLocalInbox(mergedInbox);
+    messagesRef.current = savedInbox;
+    setMessages(savedInbox);
+    setNativeNotifications(Array.isArray(latestNativeNotifications) ? latestNativeNotifications : []);
+    setStatusText('Stage 4 native notifications local inbox mein sync kar di gayi hain.');
+  };
+
+  const clearNativeNotificationSnapshot = async () => {
+    await clearCapturedNotifications();
+    setNativeNotifications([]);
+    setNativeBridgeStatus((current) => ({
+      ...current,
+      storedCount: 0,
+    }));
+    setStatusText('Stage 4 native notification snapshot clear kar diya gaya hai.');
+  };
+
   const handleVoiceResult = async (spokenText) => {
     const cleanedSpeech = String(spokenText || '').trim();
     if (!cleanedSpeech) {
@@ -338,143 +477,94 @@ export default function SoniyaCompanionScreen() {
     <>
       <SafeAreaView style={styles.safeArea}>
         <StatusBar barStyle="light-content" />
-        <LinearGradient colors={['#06131f', '#13203e', '#3c1326']} style={styles.background}>
-          <View style={styles.topBar}>
-            <View>
-              <Text style={styles.brandEyebrow}>Companion Mode</Text>
-              <Text style={styles.brandTitle}>{APP_NAME}</Text>
-            </View>
-            <TouchableOpacity
-              activeOpacity={0.9}
-              style={styles.utilityButton}
-              onPress={() => setUtilityVisible(true)}
-            >
-              <Ionicons name="grid-outline" size={18} color="#fff8fb" />
-              <Text style={styles.utilityButtonText}>Utility</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.heroSection}>
-            <View style={styles.heroGlow} />
-            <View style={styles.avatarStage}>
-              <SoniyaAvatar
-                mood={assistantMood}
-                isSpeaking={isSpeaking}
-                isThinking={isThinking}
-                viewType="FULL"
-                activityMode={activityMode}
-                styleVariant={assistantMood === 'SAD' ? 'CASUAL' : 'ELEGANT'}
-                autoModeEnabled
-              />
-            </View>
-
-            <View style={styles.heroOverlay}>
-              <View style={styles.speechCard}>
-                <Text style={styles.speechLabel}>Soniya</Text>
-                <Text style={styles.speechText}>{statusText}</Text>
-              </View>
-
-              <View style={styles.heroMetaRow}>
-                <StatusPill
-                  label={`${unreadCount} unread`}
-                  accent={unreadCount > 0}
-                  icon="mail-unread-outline"
-                />
-                <StatusPill
-                  label={voiceModeLabel}
-                  accent={voiceRuntime.recognitionAvailable}
-                  icon="mic-outline"
-                />
-                <StatusPill
-                  label={sessionUnlocked ? 'Unlocked' : 'PIN locked'}
-                  accent={sessionUnlocked}
-                  icon="shield-checkmark-outline"
-                />
-              </View>
-            </View>
-          </View>
-
-          <View style={styles.bottomPanel}>
-            <View style={styles.promptStrip}>
-              <Text style={styles.promptTitle}>Main things only</Text>
-              <Text style={styles.promptSubtitle}>
-                Mujh se normal baat bhi karein aur app commands bhi dein. {voiceHintLabel}.
-              </Text>
-            </View>
-
-            <ScrollView
-              style={styles.chatList}
-              contentContainerStyle={styles.chatListContent}
-              showsVerticalScrollIndicator={false}
-            >
-              {displayedConversation.map((item) => (
-                <ChatBubble key={item.id} item={item} />
-              ))}
-            </ScrollView>
-
-            <View style={styles.quickRow}>
-              {QUICK_HOME_COMMANDS.map((command) => (
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
+          style={{ flex: 1 }}
+          keyboardVerticalOffset={Platform.OS === 'android' ? 25 : 0}
+        >
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <LinearGradient colors={['#06131f', '#13203e', '#3c1326']} style={styles.background}>
+              <View style={styles.topBar}>
+                <View>
+                  <Text style={styles.brandEyebrow}>Companion Mode</Text>
+                  <Text style={styles.brandTitle}>{APP_NAME}</Text>
+                </View>
                 <TouchableOpacity
-                  key={command}
-                  activeOpacity={0.86}
-                  style={styles.quickButton}
-                  onPress={() => submitPrompt(command)}
+                  activeOpacity={0.9}
+                  style={styles.utilityButton}
+                  onPress={() => setUtilityVisible(true)}
                 >
-                  <Text style={styles.quickButtonText}>{command}</Text>
+                  <Ionicons name="grid-outline" size={18} color="#fff8fb" />
+                  <Text style={styles.utilityButtonText}>Utility</Text>
                 </TouchableOpacity>
-              ))}
-            </View>
+              </View>
 
-            <View style={styles.composerRow}>
-              <TextInput
-                value={composerText}
-                onChangeText={setComposerText}
-                placeholder="Ask Soniya anything..."
-                placeholderTextColor="#8ea0b7"
-                style={styles.composerInput}
-                multiline
-              />
-              <TouchableOpacity
-                activeOpacity={0.9}
-                style={styles.sendButton}
-                onPress={() => submitPrompt()}
-              >
-                <Ionicons name="arrow-up" size={18} color="#082c2f" />
-              </TouchableOpacity>
-            </View>
+              <View style={styles.heroSection}>
+                <View style={styles.heroGlow} />
+                <View style={styles.avatarStage}>
+                  <View style={styles.avatarFrame}>
+                    <SoniyaAvatar
+                      mood={assistantMood}
+                      isSpeaking={isSpeaking}
+                      isThinking={isThinking}
+                      viewType="FULL"
+                      activityMode={activityMode}
+                      styleVariant={assistantMood === 'SAD' ? 'CASUAL' : 'ELEGANT'}
+                      autoModeEnabled
+                      pinToBottom
+                    />
+                  </View>
+                </View>
 
-            <View style={styles.actionsRow}>
-              <VoiceHandler
-                onSpeechResult={handleVoiceResult}
-                onListenStart={() => setVoiceStatusText('Listening... boliye.')}
-                onListenEnd={() => setVoiceStatusText(voiceHintLabel)}
-              />
+                <View style={styles.heroOverlay}>
+                  <View style={styles.speechCard}>
+                    <Text style={styles.speechLabel}>Soniya</Text>
+                    <Text numberOfLines={4} style={styles.speechText}>{statusText}</Text>
+                  </View>
 
-              <TouchableOpacity
-                activeOpacity={0.88}
-                style={styles.miniAction}
-                onPress={() => submitPrompt('Kis kis ka message aya hai?')}
-              >
-                <Ionicons name="chatbox-ellipses-outline" size={16} color="#fef2f7" />
-                <Text style={styles.miniActionText}>Messages</Text>
-              </TouchableOpacity>
+                  <View style={styles.heroMetaRow}>
+                    <StatusPill
+                      label={`${unreadCount} unread`}
+                      accent={unreadCount > 0}
+                      icon="mail-unread-outline"
+                    />
+                    <StatusPill
+                      label={sessionUnlocked ? 'Unlocked' : 'Locked'}
+                      accent={sessionUnlocked}
+                      icon="shield-checkmark-outline"
+                    />
+                  </View>
+                </View>
+              </View>
 
-              <TouchableOpacity
-                activeOpacity={0.88}
-                style={styles.miniAction}
-                onPress={() => submitPrompt('lock')}
-              >
-                <Ionicons name="lock-closed-outline" size={16} color="#fef2f7" />
-                <Text style={styles.miniActionText}>Lock</Text>
-              </TouchableOpacity>
-            </View>
+              <View style={styles.bottomDock}>
+                <View style={styles.composerRow}>
+                  <TextInput
+                    value={composerText}
+                    onChangeText={setComposerText}
+                    placeholder="Type a message..."
+                    placeholderTextColor="#8ea0b7"
+                    style={styles.composerInput}
+                  />
+                  <TouchableOpacity
+                    activeOpacity={0.9}
+                    style={styles.sendButton}
+                    onPress={() => submitPrompt()}
+                  >
+                    <Ionicons name="arrow-up" size={18} color="#082c2f" />
+                  </TouchableOpacity>
+                </View>
 
-            <View style={styles.runtimeNote}>
-              <Ionicons name="information-circle-outline" size={14} color="#88e7dc" />
-              <Text style={styles.runtimeNoteText}>{voiceStatusText}</Text>
-            </View>
-          </View>
-        </LinearGradient>
+                <View style={styles.micActionRow}>
+                  <VoiceHandler
+                    onSpeechResult={handleVoiceResult}
+                    showLabel={true}
+                  />
+                </View>
+              </View>
+            </LinearGradient>
+          </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
       </SafeAreaView>
       <Modal
         animationType="slide"
@@ -533,7 +623,7 @@ export default function SoniyaCompanionScreen() {
                   <TextInput
                     value={pinInput}
                     onChangeText={setPinInput}
-                    placeholder="Enter PIN 1598"
+                    placeholder="Enter your PIN"
                     placeholderTextColor="#8290a5"
                     secureTextEntry
                     keyboardType="number-pad"
@@ -598,6 +688,82 @@ export default function SoniyaCompanionScreen() {
               </UtilityCard>
 
               <UtilityCard
+                title="PIN security"
+                subtitle="Apna privacy PIN yahan set ya change karein. Yeh local device par ही rahega."
+              >
+                <View style={styles.utilityChipRow}>
+                  <StatusPill
+                    label={defaultPinActive ? 'Default PIN active' : 'Custom PIN active'}
+                    accent={!defaultPinActive}
+                    icon="lock-closed-outline"
+                  />
+                  <StatusPill
+                    label={sessionUnlocked ? 'Session unlocked' : 'Session locked'}
+                    accent={sessionUnlocked}
+                    icon="shield-checkmark-outline"
+                  />
+                </View>
+
+                <View style={styles.voiceInfoCard}>
+                  <Text style={styles.voiceInfoMain}>
+                    {defaultPinActive
+                      ? 'Privacy ko strong rakhne ke liye apna custom PIN set kar dein.'
+                      : 'Custom PIN active hai. Zaroorat parhne par yahin se change kar sakte hain.'}
+                  </Text>
+                  <Text style={styles.voiceInfoMeta}>
+                    PIN 4 se 8 digits ka hona chahiye. App aap ka PIN screen par khud reveal nahi karegi.
+                  </Text>
+                </View>
+
+                <View style={styles.pinSecurityForm}>
+                  <TextInput
+                    value={currentPinDraft}
+                    onChangeText={setCurrentPinDraft}
+                    placeholder="Current PIN"
+                    placeholderTextColor="#8290a5"
+                    secureTextEntry
+                    keyboardType="number-pad"
+                    style={styles.pinInput}
+                  />
+                  <TextInput
+                    value={newPinDraft}
+                    onChangeText={setNewPinDraft}
+                    placeholder="New PIN"
+                    placeholderTextColor="#8290a5"
+                    secureTextEntry
+                    keyboardType="number-pad"
+                    style={styles.pinInput}
+                  />
+                  <TextInput
+                    value={confirmPinDraft}
+                    onChangeText={setConfirmPinDraft}
+                    placeholder="Confirm new PIN"
+                    placeholderTextColor="#8290a5"
+                    secureTextEntry
+                    keyboardType="number-pad"
+                    style={styles.pinInput}
+                  />
+                </View>
+
+                <View style={styles.nativeActionsWrap}>
+                  <TouchableOpacity
+                    activeOpacity={0.88}
+                    style={styles.refreshButton}
+                    onPress={updateOwnerPin}
+                  >
+                    <Text style={styles.refreshButtonText}>Update PIN</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    activeOpacity={0.88}
+                    style={styles.secondaryInlineButton}
+                    onPress={lockPrivacyNow}
+                  >
+                    <Text style={styles.secondaryInlineButtonText}>Lock now</Text>
+                  </TouchableOpacity>
+                </View>
+              </UtilityCard>
+
+              <UtilityCard
                 title="Voice runtime"
                 subtitle="Officially mic input tab chalegi jab app development build par run ho, Expo Go par nahi."
               >
@@ -638,6 +804,104 @@ export default function SoniyaCompanionScreen() {
                 >
                   <Text style={styles.refreshButtonText}>Refresh voice runtime</Text>
                 </TouchableOpacity>
+              </UtilityCard>
+
+              <UtilityCard
+                title="Recent conversation"
+                subtitle="Home screen clean rakhi gayi hai. Pichli baatein yahan dekh sakte hain."
+              >
+                {displayedConversation.length ? (
+                  <View style={styles.utilityConversationList}>
+                    {displayedConversation.map((item) => (
+                      <ChatBubble key={item.id} item={item} />
+                    ))}
+                  </View>
+                ) : (
+                  <Text style={styles.utilityEmptyText}>Abhi conversation start nahi hui.</Text>
+                )}
+              </UtilityCard>
+
+              <UtilityCard
+                title="Stage 4 Android bridge"
+                subtitle="Yeh native listener/service layer hai jo prebuild ke baad Android dev build mein active hogi."
+              >
+                <View style={styles.utilityChipRow}>
+                  <StatusPill
+                    label={stageFourStatusLabel}
+                    accent={nativeBridgeAvailable}
+                    icon="construct-outline"
+                  />
+                  <StatusPill
+                    label={nativeBridgeStatus.notificationAccessEnabled ? 'Notification access enabled' : 'Notification access pending'}
+                    accent={nativeBridgeStatus.notificationAccessEnabled}
+                    icon="notifications-outline"
+                  />
+                  <StatusPill
+                    label={nativeBridgeStatus.listenerConnected ? 'Listener connected' : 'Listener waiting'}
+                    accent={nativeBridgeStatus.listenerConnected}
+                    icon="pulse-outline"
+                  />
+                </View>
+
+                <View style={styles.voiceInfoCard}>
+                  <Text style={styles.voiceInfoMain}>
+                    Stored native notifications: {nativeBridgeStatus.storedCount}
+                  </Text>
+                  <Text style={styles.voiceInfoMeta}>
+                    Foreground service: {nativeBridgeStatus.foregroundServiceActive ? 'active' : 'inactive'}
+                  </Text>
+                  <Text style={styles.voiceInfoMeta}>
+                    Native notifications in current snapshot: {nativeNotifications.length}
+                  </Text>
+                </View>
+
+                <View style={styles.nativeActionsWrap}>
+                  <TouchableOpacity
+                    activeOpacity={0.88}
+                    style={styles.refreshButton}
+                    onPress={openNotificationListenerSettings}
+                  >
+                    <Text style={styles.refreshButtonText}>Open notification access</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    activeOpacity={0.88}
+                    style={styles.refreshButton}
+                    onPress={startNativeAssistantService}
+                  >
+                    <Text style={styles.refreshButtonText}>Start background service</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    activeOpacity={0.88}
+                    style={styles.refreshButton}
+                    onPress={requestNativeNotificationRebind}
+                  >
+                    <Text style={styles.refreshButtonText}>Request listener rebind</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    activeOpacity={0.88}
+                    style={styles.refreshButton}
+                    onPress={refreshNativeBridgeState}
+                  >
+                    <Text style={styles.refreshButtonText}>Refresh Stage 4 status</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.nativeActionsWrap}>
+                  <TouchableOpacity
+                    activeOpacity={0.88}
+                    style={styles.secondaryInlineButton}
+                    onPress={syncNativeNotifications}
+                  >
+                    <Text style={styles.secondaryInlineButtonText}>Sync native inbox to app</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    activeOpacity={0.88}
+                    style={styles.secondaryInlineButton}
+                    onPress={clearNativeNotificationSnapshot}
+                  >
+                    <Text style={styles.secondaryInlineButtonText}>Clear native snapshot</Text>
+                  </TouchableOpacity>
+                </View>
               </UtilityCard>
 
               <UtilityCard
@@ -705,38 +969,44 @@ const styles = StyleSheet.create({
   },
   heroSection: {
     flex: 1,
-    marginTop: 8,
     position: 'relative',
     justifyContent: 'flex-end',
   },
   heroGlow: {
     position: 'absolute',
-    top: '16%',
-    left: '12%',
-    right: '12%',
-    height: '46%',
+    top: '10%',
+    left: '8%',
+    right: '8%',
+    height: '56%',
     borderRadius: 200,
-    backgroundColor: 'rgba(250, 114, 182, 0.12)',
+    backgroundColor: 'rgba(250, 114, 182, 0.16)',
   },
   avatarStage: {
     flex: 1,
     justifyContent: 'flex-end',
     alignItems: 'center',
-    overflow: 'hidden',
+    // Removed overflow: 'hidden' to prevent clipping Soniya's head when scaled
+  },
+  avatarFrame: {
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    transform: [{ scale: 1.1 }], // Slightly reduced scale to keep face in view
+    marginBottom: -40, // Adjusted to sit better on the dock
   },
   heroOverlay: {
     position: 'absolute',
-    top: 14,
+    top: 10,
     left: 16,
     right: 16,
-    gap: 12,
+    gap: 10,
   },
   speechCard: {
     alignSelf: 'flex-start',
-    maxWidth: '82%',
-    borderRadius: 24,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    maxWidth: '74%',
+    borderRadius: 22,
+    paddingHorizontal: 15,
+    paddingVertical: 12,
     backgroundColor: 'rgba(8, 18, 32, 0.72)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
@@ -751,9 +1021,9 @@ const styles = StyleSheet.create({
   speechText: {
     marginTop: 6,
     color: '#f9edf6',
-    fontSize: 15,
-    lineHeight: 22,
-    fontWeight: '600',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '700',
   },
   heroMetaRow: {
     flexDirection: 'row',
@@ -783,36 +1053,50 @@ const styles = StyleSheet.create({
   statusPillTextAccent: {
     color: '#092c30',
   },
-  bottomPanel: {
+  bottomDock: {
+    marginHorizontal: 16,
+    paddingBottom: 24,
+    paddingTop: 10,
+    gap: 15,
+  },
+  micActionRow: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+  },
+  voiceActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.06)',
+  },
+  voiceActionLabel: {
+    color: '#91f0df',
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  recentSignalCard: {
+    marginBottom: 10,
+    borderRadius: 18,
     paddingHorizontal: 14,
-    paddingTop: 16,
-    paddingBottom: 16,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    backgroundColor: 'rgba(4, 10, 18, 0.82)',
-    borderTopWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    paddingVertical: 11,
   },
-  promptStrip: {
-    marginBottom: 12,
-  },
-  promptTitle: {
-    color: '#fff4f8',
-    fontSize: 18,
+  recentSignalLabel: {
+    color: '#91f0df',
+    fontSize: 11,
     fontWeight: '900',
+    textTransform: 'uppercase',
+    letterSpacing: 0.9,
   },
-  promptSubtitle: {
+  recentSignalText: {
     marginTop: 5,
-    color: '#bac6d7',
+    color: '#f4edf8',
     fontSize: 13,
-    lineHeight: 19,
-  },
-  chatList: {
-    maxHeight: 186,
-  },
-  chatListContent: {
-    gap: 10,
-    paddingBottom: 2,
+    lineHeight: 18,
   },
   chatBubble: {
     borderRadius: 20,
@@ -851,49 +1135,46 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   quickRow: {
-    marginTop: 12,
+    marginTop: 10,
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
   },
   quickButton: {
     borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
     backgroundColor: '#10192a',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
   },
   quickButtonText: {
     color: '#e7deef',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
+    maxWidth: 118,
   },
   composerRow: {
-    marginTop: 12,
     flexDirection: 'row',
-    alignItems: 'flex-end',
+    alignItems: 'center',
     gap: 10,
   },
   composerInput: {
     flex: 1,
-    minHeight: 56,
-    maxHeight: 110,
-    borderRadius: 22,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: '#0b1524',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.09)',
-    color: '#f7f6fb',
-    fontSize: 14,
-    textAlignVertical: 'top',
-  },
-  sendButton: {
-    width: 54,
     height: 54,
     borderRadius: 27,
-    backgroundColor: '#bafaf3',
+    paddingHorizontal: 20,
+    backgroundColor: 'rgba(15, 23, 42, 0.8)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  sendButton: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -924,7 +1205,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   runtimeNote: {
-    marginTop: 10,
+    marginTop: 8,
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 8,
@@ -932,8 +1213,8 @@ const styles = StyleSheet.create({
   runtimeNoteText: {
     flex: 1,
     color: '#9fb7bf',
-    fontSize: 12,
-    lineHeight: 18,
+    fontSize: 11,
+    lineHeight: 16,
   },
   utilitySafeArea: {
     flex: 1,
@@ -1044,6 +1325,10 @@ const styles = StyleSheet.create({
   pinRow: {
     marginTop: 14,
     flexDirection: 'row',
+    gap: 10,
+  },
+  pinSecurityForm: {
+    marginTop: 14,
     gap: 10,
   },
   pinInput: {
@@ -1194,6 +1479,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 18,
   },
+  utilityConversationList: {
+    gap: 10,
+  },
+  utilityEmptyText: {
+    color: '#b3c0cf',
+    fontSize: 13,
+    lineHeight: 19,
+  },
   refreshButton: {
     marginTop: 14,
     alignSelf: 'flex-start',
@@ -1208,6 +1501,25 @@ const styles = StyleSheet.create({
     color: '#ddfff9',
     fontSize: 12,
     fontWeight: '900',
+  },
+  nativeActionsWrap: {
+    marginTop: 12,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  secondaryInlineButton: {
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: '#141d2f',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  secondaryInlineButtonText: {
+    color: '#edf2f9',
+    fontSize: 12,
+    fontWeight: '800',
   },
   ruleRow: {
     flexDirection: 'row',

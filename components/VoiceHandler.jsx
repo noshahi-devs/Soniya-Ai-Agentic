@@ -9,10 +9,11 @@ import {
 } from '../utils/speechRecognitionSafe';
 
 const AUTO_SILENCE_MS = 1700;
+const TAP_LISTEN_MS = 2000;
 const MAX_LISTEN_MS = 14000;
 const SIGNAL_BAR_MAX_HEIGHT = 22;
 
-const VoiceHandler = ({ onSpeechResult, disabled = false, onListenStart, onListenEnd, variant = 'COMPACT' }) => {
+const VoiceHandler = ({ onSpeechResult, disabled = false, onListenStart, onListenEnd, variant = 'COMPACT', showLabel = true }) => {
     const [isListening, setIsListening] = useState(false);
     const [isStarting, setIsStarting] = useState(false);
     const [liveTranscript, setLiveTranscript] = useState('');
@@ -27,6 +28,7 @@ const VoiceHandler = ({ onSpeechResult, disabled = false, onListenStart, onListe
     const stopTimeoutRef = useRef(null);
     const silenceTimerRef = useRef(null);
     const maxListenTimerRef = useRef(null);
+    const tapWindowTimerRef = useRef(null);
     const hasShownUnavailableAlertRef = useRef(false);
     const speechRecognitionAvailable = useMemo(() => isSpeechRecognitionAvailable(), []);
 
@@ -47,6 +49,10 @@ const VoiceHandler = ({ onSpeechResult, disabled = false, onListenStart, onListe
         if (maxListenTimerRef.current) {
             clearTimeout(maxListenTimerRef.current);
             maxListenTimerRef.current = null;
+        }
+        if (tapWindowTimerRef.current) {
+            clearTimeout(tapWindowTimerRef.current);
+            tapWindowTimerRef.current = null;
         }
     }, []);
 
@@ -186,6 +192,12 @@ const VoiceHandler = ({ onSpeechResult, disabled = false, onListenStart, onListe
                 stopListening(true);
             }
         }, MAX_LISTEN_MS);
+
+        tapWindowTimerRef.current = setTimeout(() => {
+            if (isListeningRef.current && !startInProgressRef.current) {
+                stopListening(true);
+            }
+        }, TAP_LISTEN_MS);
     }, [
         clearSpeechTimers,
         disabled,
@@ -228,6 +240,10 @@ const VoiceHandler = ({ onSpeechResult, disabled = false, onListenStart, onListe
             if (maxListenTimerRef.current) {
                 clearTimeout(maxListenTimerRef.current);
                 maxListenTimerRef.current = null;
+            }
+            if (tapWindowTimerRef.current) {
+                clearTimeout(tapWindowTimerRef.current);
+                tapWindowTimerRef.current = null;
             }
 
             try {
@@ -457,9 +473,9 @@ const VoiceHandler = ({ onSpeechResult, disabled = false, onListenStart, onListe
                     accessibilityRole="button"
                     accessibilityLabel={voiceState.title}
                 >
-                    <LinearGradient colors={voiceState.buttonColors} style={styles.compactButton}>
+                    <LinearGradient colors={voiceState.buttonColors} style={[styles.compactButton, !showLabel && styles.compactButtonIconOnly]}>
                         <Ionicons name={voiceState.icon} size={18} color="#fff" />
-                        <Text style={styles.compactButtonText}>{compactButtonLabel}</Text>
+                        {showLabel && <Text style={styles.compactButtonText}>{compactButtonLabel}</Text>}
                     </LinearGradient>
                 </TouchableOpacity>
                 {!!liveTranscript && (
@@ -605,6 +621,13 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: '900',
         letterSpacing: 0.8
+    },
+    compactButtonIconOnly: {
+        minWidth: 52,
+        width: 52,
+        height: 52,
+        borderRadius: 26,
+        paddingHorizontal: 0,
     },
     compactTranscript: {
         marginTop: 6,

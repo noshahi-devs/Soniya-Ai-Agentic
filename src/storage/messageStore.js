@@ -118,6 +118,27 @@ export const attachReplyToMessage = (messages = [], messageId = '', replyText = 
   ))
 );
 
+export const mergeNativeNotificationsIntoInbox = (messages = [], nativeNotifications = []) => {
+  const currentInbox = cloneInbox(messages);
+  const existingIds = new Set(currentInbox.map((message) => message.id));
+
+  const additions = nativeNotifications
+    .map((notification = {}) => normalizeMessage({
+      id: notification.id || `native-${notification.receivedAtMs || Date.now()}`,
+      app: notification.app || notification.packageName || 'WhatsApp',
+      sender: notification.sender || 'Unknown sender',
+      body: notification.body || '',
+      receivedAt: notification.receivedAt || 'Just now',
+      isRead: false,
+      lastReplyText: '',
+      repliedAt: '',
+    }))
+    .filter((notification) => notification.sender && notification.body)
+    .filter((notification) => !existingIds.has(notification.id));
+
+  return [...additions, ...currentInbox];
+};
+
 export const buildAnnouncement = (message, romanticTone = true) => {
   if (!message) return 'No message detected yet.';
   if (!romanticTone) {

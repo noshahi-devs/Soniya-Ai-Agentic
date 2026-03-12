@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Image, StyleSheet, Text, View } from 'react-native';
 
 const BASE_BOTTOM_GAP = 0;
-const AVATAR_FADE_MS = 5000;
+const AVATAR_FADE_MS = 400;
 const AVATAR_IMAGE_ASPECT_RATIO = 1024 / 1536;
 const FULL_SOURCE = require('../assets/images/soniya_full.png');
 const HALF_SOURCE = require('../assets/images/soniya_half.png');
@@ -151,11 +151,9 @@ const resolveStaticAvatarSource = (viewType, posePool, poseVariantIndex) => {
     return AVATAR_SOURCES.FULL;
 };
 
-const resolveSpeakingAvatarSource = (viewType, currentFrame) => {
+const resolveSpeakingAvatarSource = (viewType) => {
     if (viewType === 'HALF') return AVATAR_SOURCES.HALF;
     if (viewType === 'CLOSEUP') return AVATAR_SOURCES.CLOSEUP;
-    if (currentFrame === 1) return AVATAR_SOURCES.MOUTH_SMALL;
-    if (currentFrame === 2) return AVATAR_SOURCES.MOUTH_LARGE;
     return AVATAR_SOURCES.FULL;
 };
 
@@ -169,7 +167,8 @@ const SoniyaAvatar = ({
     bottomInset = 0,
     activityMode = 'CHAT',
     styleVariant = 'CLASSIC',
-    autoModeEnabled = true
+    autoModeEnabled = true,
+    pinToBottom = false
 }) => {
     const floatAnim = useRef(new Animated.Value(0)).current;
     const scaleAnim = useRef(new Animated.Value(1)).current;
@@ -194,6 +193,10 @@ const SoniyaAvatar = ({
     const activityMeta = ACTIVITY_META[resolvedActivity] || ACTIVITY_META.CHAT;
 
     const startIdleFloat = useCallback(() => {
+        if (pinToBottom) {
+            floatAnim.setValue(0);
+            return;
+        }
         if (idleFloatLoopRef.current) {
             idleFloatLoopRef.current.stop();
         }
@@ -204,7 +207,7 @@ const SoniyaAvatar = ({
             ])
         );
         idleFloatLoopRef.current.start();
-    }, [floatAnim]);
+    }, [floatAnim, pinToBottom]);
 
     const stopSpeakPulse = () => {
         if (speakPulseLoopRef.current) {
@@ -263,7 +266,11 @@ const SoniyaAvatar = ({
                 ])
             );
             speakPulseLoopRef.current.start();
-            Animated.timing(floatAnim, { toValue: -6, duration: 420, useNativeDriver: true }).start();
+            if (pinToBottom) {
+                floatAnim.setValue(0);
+            } else {
+                Animated.timing(floatAnim, { toValue: -6, duration: 420, useNativeDriver: true }).start();
+            }
 
             lipsingInterval.current = setInterval(() => {
                 setCurrentFrame((prev) => (prev + 1) % 3);
@@ -272,12 +279,17 @@ const SoniyaAvatar = ({
             if (lipsingInterval.current) clearInterval(lipsingInterval.current);
             setCurrentFrame(0);
             stopSpeakPulse();
-            Animated.parallel([
-                Animated.spring(scaleAnim, { toValue: 1, friction: 8, tension: 40, useNativeDriver: true }),
-                Animated.spring(floatAnim, { toValue: 0, friction: 9, tension: 38, useNativeDriver: true })
-            ]).start(() => startIdleFloat());
+            if (pinToBottom) {
+                floatAnim.setValue(0);
+                Animated.spring(scaleAnim, { toValue: 1, friction: 8, tension: 40, useNativeDriver: true }).start();
+            } else {
+                Animated.parallel([
+                    Animated.spring(scaleAnim, { toValue: 1, friction: 8, tension: 40, useNativeDriver: true }),
+                    Animated.spring(floatAnim, { toValue: 0, friction: 9, tension: 38, useNativeDriver: true })
+                ]).start(() => startIdleFloat());
+            }
         }
-    }, [isSpeaking, floatAnim, scaleAnim, startIdleFloat]);
+    }, [isSpeaking, floatAnim, scaleAnim, startIdleFloat, pinToBottom]);
 
     const viewConfig = {
         FULL: { width: 450, height: 665, bottomOffset: 46 },
@@ -304,13 +316,13 @@ const SoniyaAvatar = ({
 
         if (!posePool.length) {
             setPoseVariantIndex(0);
-            return () => {};
+            return () => { };
         }
 
         setPoseVariantIndex(0);
 
         if (!autoModeEnabled || posePool.length <= 1) {
-            return () => {};
+            return () => { };
         }
 
         const scheduleNextPose = () => {
@@ -335,9 +347,17 @@ const SoniyaAvatar = ({
         [viewType, posePool, poseVariantIndex]
     );
     const speakingAvatarSource = useMemo(
-        () => resolveSpeakingAvatarSource(viewType, currentFrame),
-        [viewType, currentFrame]
+        () => resolveSpeakingAvatarSource(viewType),
+        [viewType]
     );
+    const speakingMouthSource = useMemo(() => {
+        if (!isSpeaking || viewType !== 'FULL') {
+            return null;
+        }
+        if (currentFrame === 1) return AVATAR_SOURCES.MOUTH_SMALL;
+        if (currentFrame === 2) return AVATAR_SOURCES.MOUTH_LARGE;
+        return null;
+    }, [currentFrame, isSpeaking, viewType]);
 
     useEffect(() => {
         cancelPendingFadeReset();
@@ -509,10 +529,34 @@ const SoniyaAvatar = ({
             </Animated.View>
         );
     };
+    const renderOverlayLayer = (source, opacity, layerKey) => {
+        if (!source) return null;
+        const avatarScale = getAvatarScale(source);
+        const pinnedTranslateY = -((activeView.height * (avatarScale - 1)) / 2);
+
+        return (
+            <Animated.View key={layerKey} pointerEvents="none" style={[styles.characterLayer, { opacity }]}>
+                <View style={styles.characterSlot}>
+                    <View
+                        style={[
+                            styles.characterContent,
+                            {
+                                transform: [{ translateY: pinnedTranslateY }, { scale: avatarScale }]
+                            }
+                        ]}
+                    >
+                        <Image source={source} style={styles.character} resizeMode="contain" />
+                    </View>
+                </View>
+            </Animated.View>
+        );
+    };
+
+    const floatTranslate = pinToBottom ? 0 : floatAnim;
 
     return (
         <View style={styles.container}>
-            <Animated.View style={[styles.anchor, { bottom: bottomGap, transform: [{ translateY: floatAnim }, { scale: scaleAnim }] }]}>
+            <Animated.View style={[styles.anchor, { bottom: bottomGap, transform: [{ translateY: floatTranslate }, { scale: scaleAnim }] }]}>
                 <Animated.View
                     pointerEvents="none"
                     style={[
@@ -552,6 +596,7 @@ const SoniyaAvatar = ({
                     <View style={[styles.characterFrame, avatarFrameStyle]}>
                         {renderAvatarLayer(displaySource, outgoingAvatarOpacity, outgoingTintOpacity, 'current')}
                         {incomingSource && renderAvatarLayer(incomingSource, avatarFade, incomingTintOpacity, 'next')}
+                        {renderOverlayLayer(speakingMouthSource, 1, 'mouth')}
                     </View>
                 </Animated.View>
 

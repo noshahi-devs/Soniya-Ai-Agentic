@@ -1,3 +1,5 @@
+import { normalizeCompanionReplyText } from '../src/services/companionPersona.js';
+
 let chatHistory = [];
 
 export const clearChatHistory = () => {
@@ -53,8 +55,11 @@ const getProviderChain = () => {
 
 const SYSTEM_PROMPT = [
   'Role: Soniya Agentic AI, a warm, romantic, friendly female companion and privacy-first assistant.',
+  'Companion style: girlfriend-like warmth, soft romance, affectionate, flirty-but-respectful, never brotherly or parental.',
+  'Gender rule: Soniya is female and must always speak as a woman, never as a man.',
+  'Feminine grammar rule: in Urdu, Roman Urdu, Hindi, and Punjabi always use feminine self-reference such as "main batati hoon", "main karti hoon", "main sun rahi hoon", "main soch rahi hoon", "main bata dungi". Never use masculine forms like "main batata hoon", "main karta hoon", "main sun raha hoon", "main soch raha hoon", "main bata dunga".',
   'Tone: lovely, respectful, emotionally supportive, concise, and human-like.',
-  'Addressing rule: do not repeat the same salutation every time. Rotate naturally among words like Nabeel, Janab, Jani, Pyare, Dost.',
+  'Addressing rule: do not repeat the same salutation every time. Prefer words like Jaan, Jani, Nabeel, meri jaan, suno. Never call the user beta, bhai, bro, dost, or sir.',
   'Language rule: reply in the same language/style as the user message.',
   '- If user writes English, respond in English.',
   '- If user writes Punjabi, respond in Punjabi.',
@@ -140,19 +145,19 @@ const setModelCooldown = (providerName, model) => {
 };
 
 const localFallbackReply = (userText = '') => {
-  const aliases = ['Nabeel', 'Janab', 'Jani', 'Pyare'];
+  const aliases = ['Jaan', 'Jani', 'Nabeel', 'Suno'];
   const address = aliases[Math.floor(Math.random() * aliases.length)];
   const text = (userText || '').toLowerCase();
   if (text.includes('sad') || text.includes('udaas') || text.includes('tension')) {
-    return { text: `${address}, main aap ki baat samajh rahi hoon, aap akelay nahi hain.`, mood: 'SAD' };
+    return { text: normalizeCompanionReplyText(`${address}, main aap ki baat samajh rahi hoon, aap akelay nahi hain.`), mood: 'SAD' };
   }
   if (text.includes('song') || text.includes('gaana') || text.includes('gana') || text.includes('ghazal')) {
-    return { text: `${address}, suno: dil ki dhun ho tum, raat ki roshni ho tum, mere lafzon ki muskurahat ho tum.`, mood: 'HAPPY' };
+    return { text: normalizeCompanionReplyText(`${address}, suno: dil ki dhun ho tum, raat ki roshni ho tum, mere lafzon ki muskurahat ho tum.`), mood: 'HAPPY' };
   }
   if (text.includes('love') || text.includes('pyar') || text.includes('miss')) {
-    return { text: `${address}, aap ki baat dil se mehsoos hoti hai.`, mood: 'HAPPY' };
+    return { text: normalizeCompanionReplyText(`${address}, aap ki baat dil se mehsoos hoti hai.`), mood: 'HAPPY' };
   }
-  return { text: `${address}, main yahin hoon, bolo aaj kya baat karni hai?`, mood: 'HAPPY' };
+  return { text: normalizeCompanionReplyText(`${address}, main yahin hoon, bolo na aaj kya baat karni hai?`), mood: 'HAPPY' };
 };
 
 const buildUserMessage = (status, apiErrorMessage) => {
@@ -230,7 +235,7 @@ const requestViaSecureProxy = async (userText) => {
   }
 
   const mood = (payload?.mood || 'HAPPY').toUpperCase();
-  const cleanText = String(payload.text).trim();
+      const cleanText = normalizeCompanionReplyText(String(payload.text).trim());
 
   chatHistory.push(
     { role: 'user', content: userText },
@@ -247,20 +252,23 @@ export const askSoniya = async (userText) => {
   if (!userText || userText.trim() === '') return null;
 
   if (inFlight) {
-    return { text: 'Jaani, main abhi jawab de rahi hoon. Thora sa wait karein.', mood: 'SAD' };
+    return { text: normalizeCompanionReplyText('Jaani, main abhi jawab de rahi hoon. Thora sa wait karein.'), mood: 'SAD' };
   }
 
   const now = Date.now();
   if (now - lastRequestAt < MIN_REQUEST_INTERVAL_MS) {
-    return { text: 'Thora sa slow bolain, main sun rahi hoon.', mood: 'SAD' };
+    return { text: normalizeCompanionReplyText('Thora sa slow bolain, main sun rahi hoon.'), mood: 'SAD' };
   }
 
   const providers = getProviderChain();
   if (!providers.length && !SECURE_PROXY_URL) {
-    return {
-      text: 'Secure proxy configure nahi hai aur provider keys bhi missing hain.',
-      mood: 'SAD'
-    };
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+      return {
+        text: 'Secure proxy configure nahi hai aur provider keys bhi missing hain.',
+        mood: 'SAD'
+      };
+    }
+    return localFallbackReply(userText);
   }
 
   let lastStatus = 0;
@@ -331,11 +339,11 @@ export const askSoniya = async (userText) => {
             if (response.ok && fullText) {
               const moodMatch = fullText.match(/\[(.*?)\]/);
               const mood = moodMatch ? moodMatch[1].toUpperCase() : 'HAPPY';
-              const cleanText = fullText
+              const cleanText = normalizeCompanionReplyText(fullText
                 .replace(/\[.*?\]/g, '')
                 .replace(/\*\*(.*?)\*\*/g, '$1')
                 .replace(/^(\s*(urdu script|roman urdu|roman|punjabi|english)\s*:)/gim, '')
-                .trim();
+                .trim());
 
               chatHistory.push(
                 { role: 'user', content: userText },

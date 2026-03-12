@@ -348,7 +348,7 @@ function AgentStepTwoScreen() {
 
         <Card
           title="Message sandbox"
-          subtitle="Protected actions require PIN 1598 and continue locally after verification."
+          subtitle="Protected actions require PIN verification and continue locally after verification."
         >
           <View style={styles.notificationCard}>
             <Text style={styles.notificationLabel}>Incoming alert preview</Text>

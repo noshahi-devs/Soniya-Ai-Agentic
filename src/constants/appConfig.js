@@ -1,9 +1,11 @@
 export const APP_NAME = 'Soniya Agentic AI';
 export const APP_TAGLINE = 'Privacy-first romantic and friendly AI companion for Android';
-export const APP_STAGE = 'Stage 3 Complete: Voice command flow and spoken responses';
+export const APP_STAGE = 'Stage 7 In Progress: Full phone automation, accessibility service actions, and floating overlay companion';
 export const DEMO_OWNER_PIN = '1598';
 
 export const DEFAULT_SETTINGS = {
+  assistantActive: true,
+  showFloatingBubble: true,
   readMessagesAutomatically: false,
   askBeforeReply: true,
   voiceNotifications: true,
@@ -14,6 +16,16 @@ export const DEFAULT_SETTINGS = {
 };
 
 export const SETTING_DEFINITIONS = [
+  {
+    key: 'assistantActive',
+    title: 'Assistant Active',
+    description: 'Toggle Soniya service on or off. When off, background listener and voice capture are paused.',
+  },
+  {
+    key: 'showFloatingBubble',
+    title: 'Floating Companion Bubble',
+    description: 'Show a small Soniya icon on top of other apps so you know she is listening and ready.',
+  },
   {
     key: 'readMessagesAutomatically',
     title: 'Read messages automatically',
@@ -126,7 +138,22 @@ export const ROADMAP = [
   },
   {
     title: 'Stage 4',
-    status: 'Pending',
-    detail: 'Prepare Expo prebuild and Android native integration for notification listener, reboot, and background service.',
+    status: 'Completed',
+    detail: 'Expo prebuild, Android notification listener, reboot handling, foreground service, and local inbox sync are now wired.',
+  },
+  {
+    title: 'Stage 5',
+    status: 'Completed',
+    detail: 'Companion UI tuning, stronger personal memory, and proactive profile capture are now wired locally.',
+  },
+  {
+    title: 'Stage 6',
+    status: 'Completed',
+    detail: 'Privacy hardening is active with custom PIN controls, lock management, reduced PIN exposure, and native app launch commands.',
+  },
+  {
+    title: 'Stage 7',
+    status: 'In Progress',
+    detail: 'Full phone automation via Accessibility Service, System controls (Volume/Brightness/WiFi), and Floating Companion Overlay for background monitoring.',
   },
 ];

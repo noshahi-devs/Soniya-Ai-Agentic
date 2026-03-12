@@ -111,7 +111,7 @@ function AgentHomeScreen() {
     }
 
     setSessionUnlocked(false);
-    setStatusText('Tell me PIN code first, jani. Demo PIN for this stage is 1598.');
+    setStatusText('PIN verify karein, jani. Verification ke baad hi private access milega.');
   };
 
   const lockSession = () => {
@@ -250,7 +250,7 @@ function AgentHomeScreen() {
           </TouchableOpacity>
 
           <Text style={styles.lockHint}>
-            Sender list and message content remain hidden until PIN 1598 is verified for this demo stage.
+            Sender list aur message content tab tak hidden rahenge jab tak correct PIN verify na ho jaye.
           </Text>
 
           <View style={styles.senderGrid}>

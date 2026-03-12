@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { DEMO_OWNER_PIN } from '../src/constants/appConfig.js';
 
 const STORAGE_KEY = '@soniya_local_memory_v1';
 
@@ -19,13 +20,17 @@ const DEFAULT_MEMORY = {
     pa: 'Beshak har cheez da khalik Allah Pak ae. Mainu Nabeel Noshahi Sb ne develop kita, jo Noshahi Developers Inc. vich App Developer te Business Developer ne; main NDI de CEO Janab Adeel Noshahi Sb di guidance te approval naal bani aan, te NDI team di mehnat vi is vich shamil ae.'
   },
   security: {
-    ownerPin: '1598',
+    ownerPin: DEMO_OWNER_PIN,
     unlockUntil: 0,
     pendingPrivateKey: ''
   },
   privateFacts: {
     motherName: '',
     sisterName: ''
+  },
+  companionSetup: {
+    pendingFactKey: '',
+    introShown: false,
   },
   customFacts: {},
   notes: []
@@ -38,8 +43,9 @@ const normalize = (value = '') => value.toLowerCase().trim();
 const cleanValue = (value = '') =>
   value
     .replace(/^[\s:=-]+/, '')
+    .replace(/^["'`]+|["'`]+$/g, '')
     .replace(/[\s.]+$/, '')
-    .replace(/\b(hai|is)\b\s*$/i, '')
+    .replace(/\b(hai|is|hoon|hun|hu|ho|hain|am)\b\s*$/i, '')
     .trim();
 
 const mergeMemory = (stored = {}) => ({
@@ -49,6 +55,7 @@ const mergeMemory = (stored = {}) => ({
   creatorStory: { ...cloneDefaultMemory().creatorStory, ...(stored?.creatorStory || {}) },
   security: { ...cloneDefaultMemory().security, ...(stored?.security || {}) },
   privateFacts: { ...cloneDefaultMemory().privateFacts, ...(stored?.privateFacts || {}) },
+  companionSetup: { ...cloneDefaultMemory().companionSetup, ...(stored?.companionSetup || {}) },
   customFacts: { ...(stored?.customFacts || {}) },
   notes: Array.isArray(stored?.notes) ? stored.notes : []
 });
@@ -71,6 +78,44 @@ export const saveLocalMemory = async (memory) => {
   const next = mergeMemory(memory);
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   return next;
+};
+
+export const syncLocalMemorySecurityPin = async (nextPin = '') => {
+  const normalizedPin = String(nextPin || '').replace(/\D/g, '');
+  if (!normalizedPin) {
+    return { ok: false };
+  }
+
+  const memory = await loadLocalMemory();
+  memory.security.ownerPin = normalizedPin;
+  memory.security.unlockUntil = 0;
+  memory.security.pendingPrivateKey = '';
+  await saveLocalMemory(memory);
+  return { ok: true };
+};
+
+export const lockLocalMemorySecuritySession = async () => {
+  const memory = await loadLocalMemory();
+  memory.security.unlockUntil = 0;
+  memory.security.pendingPrivateKey = '';
+  await saveLocalMemory(memory);
+  return { ok: true };
+};
+
+export const getCompanionProfilePrompt = async () => {
+  const memory = await loadLocalMemory();
+  const nextFactKey = getNextCompanionFactKey(memory);
+  if (!nextFactKey) {
+    if (memory.companionSetup?.pendingFactKey) {
+      setCompanionPendingFactKey(memory, '');
+      await saveLocalMemory(memory);
+    }
+    return '';
+  }
+
+  setCompanionPendingFactKey(memory, nextFactKey);
+  await saveLocalMemory(memory);
+  return buildCompanionProfileQuestion(memory, nextFactKey, 'ur');
 };
 
 const extractAfterMarkers = (text, markers) => {
@@ -136,11 +181,653 @@ const askGenericName = (text = '') => {
   return normalize(cleanValue(match[1]));
 };
 
+const normalizeFactKey = (value = '') =>
+  normalize(value)
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+const looksLikeQuestionValue = (value = '') =>
+  /\b(kya|kia|what|who|where|kab|kahan|kaha|kaun|kon|kis|kyun|kyu|why|when|which|how)\b/i.test(value);
+
+const SENSITIVE_MEMORY_PATTERN = /\b(pin|password|passcode|otp|cvv|cvc|atm|bank|account|secret)\b/i;
+
+const FACT_LABELS = {
+  user_name: { ur: 'aap ka naam', en: 'your name', pa: 'tuhada naam' },
+  birthday: { ur: 'aap ka birthday', en: 'your birthday', pa: 'tuhada birthday' },
+  age: { ur: 'aap ki age', en: 'your age', pa: 'tuhadi age' },
+  city: { ur: 'aap ka shehar', en: 'your city', pa: 'tuhada shehar' },
+  profession: { ur: 'aap ka kaam', en: 'your work', pa: 'tuhada kam' },
+  likes: { ur: 'aap ki pasand', en: 'what you like', pa: 'tuhadi pasand' },
+};
+
+const COMPANION_PROFILE_FLOW = [
+  {
+    key: 'user_name',
+    category: 'identity',
+    label: 'aap ka naam',
+    questions: {
+      ur: "Main aap ko better jaan'na chahti hoon taa ke main aap ki important baatein yaad rakh sakoon. Sab se pehle aap ka naam kya hai?",
+      en: 'I want to know you better so I can remember your important details. First, what is your name?',
+      pa: "Main tuhanu changi tarah jaan'na chauni aan taa ke tuhadiyan aham gallan yaad rakh sakan. Sab ton pehlan tuhadda naam ki ae?",
+    },
+    retry: {
+      ur: 'Bas apna naam bata dein, jaise Nabeel Khalil.',
+      en: 'Just tell me your name, for example Nabeel Khalil.',
+      pa: 'Bas apna naam dass deo, misal layi Nabeel Khalil.',
+    },
+  },
+  {
+    key: 'age',
+    category: 'identity',
+    label: 'aap ki age',
+    questions: {
+      ur: 'Ab mujhe aap ki age bata dein. Sirf number bhi chalega, jaise 25.',
+      en: 'Now tell me your age. A number only is fine, like 25.',
+      pa: 'Hun mainu tuhadi age dass deo. Sirf number vi theek ae, jivein 25.',
+    },
+    retry: {
+      ur: 'Age number mein bata dein, jaise 25.',
+      en: 'Tell me the age in numbers, like 25.',
+      pa: 'Age number vich dass deo, jivein 25.',
+    },
+  },
+  {
+    key: 'city',
+    category: 'identity',
+    label: 'aap ka shehar',
+    questions: {
+      ur: 'Aur aap kis shehar se hain?',
+      en: 'And which city are you from?',
+      pa: 'Te tusi kis shehar ton ho?',
+    },
+    retry: {
+      ur: 'Apna shehar bata dein, jaise Lahore.',
+      en: 'Tell me your city, for example Lahore.',
+      pa: 'Apna shehar dass deo, jivein Lahore.',
+    },
+  },
+  {
+    key: 'likes',
+    category: 'preferences',
+    label: 'aap ki pasand',
+    mode: 'list',
+    questions: {
+      ur: 'Achha, aap ko kya pasand hai? Khana, hobby, ya koi bhi ek cheez bata dein.',
+      en: 'What do you like? You can tell me a food, hobby, or anything you enjoy.',
+      pa: 'Tuhanu ki pasand ae? Khaana, hobby, ya koi vi ik cheez dass deo.',
+    },
+    retry: {
+      ur: 'Jo cheez aap ko pasand hai woh bata dein, jaise biryani.',
+      en: 'Tell me something you like, for example biryani.',
+      pa: 'Koi cheez dass deo jo tuhanu pasand ae, jivein biryani.',
+    },
+  },
+  {
+    key: 'favorite_color',
+    category: 'favorite',
+    label: 'favorite color',
+    questions: {
+      ur: 'Aur aap ka favorite color kya hai?',
+      en: 'And what is your favorite color?',
+      pa: 'Te tuhadda favorite color kehda ae?',
+    },
+    retry: {
+      ur: 'Favorite color bata dein, jaise blue.',
+      en: 'Tell me your favorite color, for example blue.',
+      pa: 'Favorite color dass deo, jivein blue.',
+    },
+  },
+];
+
+const mergeAssistantReplies = (...parts) =>
+  parts
+    .map((part) => String(part || '').trim())
+    .filter(Boolean)
+    .join(' ');
+
+const getCompanionStepConfig = (factKey = '') =>
+  COMPANION_PROFILE_FLOW.find((step) => step.key === factKey) || null;
+
+const isFactMissing = (memory, factKey = '') => {
+  const fact = getStoredFact(memory, factKey);
+  return !formatFactValue(fact?.value);
+};
+
+const getNextCompanionFactKey = (memory) => {
+  const pendingKey = memory.companionSetup?.pendingFactKey || '';
+  if (pendingKey && isFactMissing(memory, pendingKey)) {
+    return pendingKey;
+  }
+
+  const nextStep = COMPANION_PROFILE_FLOW.find((step) => isFactMissing(memory, step.key));
+  return nextStep?.key || '';
+};
+
+const setCompanionPendingFactKey = (memory, factKey = '') => {
+  memory.companionSetup.pendingFactKey = factKey;
+  if (factKey) {
+    memory.companionSetup.introShown = true;
+  }
+};
+
+const buildCompanionProfileQuestion = (memory, factKey = '', lang = 'ur') => {
+  const step = getCompanionStepConfig(factKey);
+  if (!step) {
+    return '';
+  }
+
+  const nameValue = formatFactValue(getStoredFact(memory, 'user_name')?.value);
+  const prefix = factKey !== 'user_name' && nameValue
+    ? (lang === 'en' ? `${nameValue}, ` : `${nameValue}, `)
+    : '';
+
+  return `${prefix}${step.questions?.[lang] || step.questions?.ur || ''}`.trim();
+};
+
+const buildCompanionRetryPrompt = (factKey = '', text = '') => {
+  const step = getCompanionStepConfig(factKey);
+  if (!step) {
+    return '';
+  }
+
+  const lang = detectLanguageStyle(text);
+  return step.retry?.[lang] || step.retry?.ur || '';
+};
+
+const buildCompanionProfileCompleteReply = (text = '') => {
+  const lang = detectLanguageStyle(text);
+  if (lang === 'en') {
+    return 'Perfect, I have your basic profile saved in local memory now.';
+  }
+  if (lang === 'pa') {
+    return 'Perfect, hun main tuhadi basic profile local memory vich yaad rakh lai ae.';
+  }
+  return 'Perfect, maine aap ki basic profile ab local memory mein yaad rakh li hai.';
+};
+
+const isLikelyQuestionOrCommand = (text = '') =>
+  /[?؟]|\b(kya|kia|what|who|where|when|why|how|kab|kahan|kaun|kon|kis|message|reply|pin|lock|open|kholo|sunao|batao|creator|banaya)\b/i.test(text);
+
+const parsePendingCompanionAnswer = (pendingKey = '', text = '') => {
+  const value = cleanValue(text);
+  if (!pendingKey || !value || isLikelyQuestionOrCommand(text)) {
+    return null;
+  }
+
+  if (pendingKey === 'age') {
+    const ageMatch = String(text).match(/\b(\d{1,3})\b/);
+    if (!ageMatch) {
+      return { invalid: true };
+    }
+    const ageNumber = Number(ageMatch[1]);
+    if (ageNumber < 1 || ageNumber > 120) {
+      return { invalid: true };
+    }
+    return {
+      key: 'age',
+      label: 'aap ki age',
+      value: String(ageNumber),
+      category: 'identity',
+    };
+  }
+
+  if (pendingKey === 'user_name') {
+    if (!/[a-z]/i.test(value) || /\d/.test(value) || value.length < 2) {
+      return { invalid: true };
+    }
+    return {
+      key: 'user_name',
+      label: 'aap ka naam',
+      value,
+      category: 'identity',
+    };
+  }
+
+  if (pendingKey === 'city') {
+    if (!/[a-z]/i.test(value) || /\d/.test(value) || value.length < 2) {
+      return { invalid: true };
+    }
+    return {
+      key: 'city',
+      label: 'aap ka shehar',
+      value,
+      category: 'identity',
+    };
+  }
+
+  if (pendingKey === 'likes') {
+    if (value.length < 2) {
+      return { invalid: true };
+    }
+    return {
+      key: 'likes',
+      label: 'aap ki pasand',
+      value,
+      category: 'preferences',
+      mode: 'list',
+    };
+  }
+
+  if (pendingKey === 'favorite_color') {
+    if (!/[a-z]/i.test(value) || value.length < 2) {
+      return { invalid: true };
+    }
+    return {
+      key: 'favorite_color',
+      label: 'favorite color',
+      value,
+      category: 'favorite',
+    };
+  }
+
+  return null;
+};
+
+const getCompanionFollowUpPrompt = (memory, text = '', savedFactKeys = []) => {
+  const lang = detectLanguageStyle(text);
+  const currentPendingKey = memory.companionSetup?.pendingFactKey || '';
+  const savedRelevantFact = savedFactKeys.some((key) => COMPANION_PROFILE_FLOW.some((step) => step.key === key));
+  if (!currentPendingKey && !savedRelevantFact) {
+    return '';
+  }
+
+  const nextFactKey = getNextCompanionFactKey(memory);
+  if (!nextFactKey) {
+    setCompanionPendingFactKey(memory, '');
+    return buildCompanionProfileCompleteReply(text);
+  }
+
+  setCompanionPendingFactKey(memory, nextFactKey);
+  return buildCompanionProfileQuestion(memory, nextFactKey, lang);
+};
+
+const extractByPatterns = (text = '', patterns = []) => {
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const rawValue = cleanValue(match?.[1] || '');
+    if (!rawValue || looksLikeQuestionValue(rawValue)) {
+      continue;
+    }
+    return rawValue;
+  }
+  return '';
+};
+
+const rememberCustomFact = (memory, fact) => {
+  if (!fact?.key || !fact?.value) {
+    return;
+  }
+
+  const existing = memory.customFacts?.[fact.key] || {};
+  memory.customFacts[fact.key] = {
+    ...existing,
+    label: fact.label || existing.label || fact.key,
+    value: fact.value,
+    category: fact.category || existing.category || 'general',
+    updatedAt: Date.now(),
+  };
+
+  if (fact.key === 'user_name') {
+    const currentNames = Array.isArray(memory.profile?.userName) ? memory.profile.userName : [];
+    memory.profile.userName = [...new Set([String(fact.value).trim(), ...currentNames].filter(Boolean))];
+  }
+};
+
+const rememberListFact = (memory, fact) => {
+  if (!fact?.key || !fact?.value) {
+    return;
+  }
+
+  const existing = memory.customFacts?.[fact.key] || {};
+  const currentValues = Array.isArray(existing.value)
+    ? existing.value
+    : (existing.value ? [existing.value] : []);
+  const nextValues = [...new Set([...currentValues, fact.value].map(cleanValue).filter(Boolean))];
+
+  memory.customFacts[fact.key] = {
+    ...existing,
+    label: fact.label || existing.label || fact.key,
+    value: nextValues,
+    category: fact.category || existing.category || 'general',
+    updatedAt: Date.now(),
+  };
+};
+
+const getFactLabelForReply = (factKey = '', lang = 'ur', fallbackLabel = '') => {
+  if (factKey.startsWith('favorite_')) {
+    const category = factKey.replace(/^favorite_/, '').replace(/_/g, ' ');
+    if (lang === 'en') return `your favorite ${category}`;
+    if (lang === 'pa') return `tuhada favorite ${category}`;
+    return `aap ka favorite ${category}`;
+  }
+
+  return FACT_LABELS[factKey]?.[lang] || fallbackLabel || factKey.replace(/_/g, ' ');
+};
+
+const getStoredFact = (memory, factKey = '') => {
+  const stored = memory.customFacts?.[factKey];
+  if (!stored) {
+    return null;
+  }
+
+  return {
+    key: factKey,
+    label: stored.label || factKey.replace(/_/g, ' '),
+    value: stored.value,
+    category: stored.category || 'general',
+    updatedAt: stored.updatedAt || 0,
+  };
+};
+
+const formatFactValue = (value) => {
+  if (Array.isArray(value)) {
+    return value.map(cleanValue).filter(Boolean).join(', ');
+  }
+  return cleanValue(String(value || ''));
+};
+
+const buildFactSaveReply = (text = '', facts = []) => {
+  const lang = detectLanguageStyle(text);
+  const labels = [...new Set(
+    facts
+      .map((fact) => getFactLabelForReply(fact.key, lang, fact.label))
+      .filter(Boolean)
+  )];
+
+  if (lang === 'en') {
+    if (labels.length === 1) {
+      return `Okay, I have saved ${labels[0]} in local memory.`;
+    }
+    return `Okay, I have saved these personal details in local memory: ${labels.join(', ')}.`;
+  }
+
+  if (lang === 'pa') {
+    if (labels.length === 1) {
+      return `Theek ae, main ${labels[0]} local memory vich yaad rakh lita ae.`;
+    }
+    return `Theek ae, main eh personal details local memory vich yaad rakh litiyaan ne: ${labels.join(', ')}.`;
+  }
+
+  if (labels.length === 1) {
+    return `Theek hai, maine ${labels[0]} local memory mein yaad rakh liya hai.`;
+  }
+  return `Theek hai, maine ye personal details local memory mein yaad rakh li hain: ${labels.join(', ')}.`;
+};
+
+const buildFactMissingReply = (text = '', factKey = '', fallbackLabel = '') => {
+  const lang = detectLanguageStyle(text);
+  const label = getFactLabelForReply(factKey, lang, fallbackLabel);
+
+  if (lang === 'en') {
+    return `You have not told me ${label} yet.`;
+  }
+
+  if (lang === 'pa') {
+    return `Tusi menu ${label} haje tak nahi dasya.`;
+  }
+
+  return `Aap ne ${label} abhi tak mujhe nahi bataya.`;
+};
+
+const buildFactRecallReply = (text = '', factEntry = null) => {
+  if (!factEntry) {
+    return '';
+  }
+
+  const lang = detectLanguageStyle(text);
+  const value = formatFactValue(factEntry.value);
+  if (!value) {
+    return '';
+  }
+
+  if (factEntry.key === 'city') {
+    if (lang === 'en') return `You are from ${value}.`;
+    if (lang === 'pa') return `Tusi ${value} ton ho.`;
+    return `Aap ${value} se hain.`;
+  }
+
+  if (factEntry.key === 'likes') {
+    if (lang === 'en') return `You like ${value}.`;
+    if (lang === 'pa') return `Tuhanu ${value} pasand ae.`;
+    return `Aap ko ${value} pasand hai.`;
+  }
+
+  const label = getFactLabelForReply(factEntry.key, lang, factEntry.label);
+  if (lang === 'en') {
+    return `${label.charAt(0).toUpperCase()}${label.slice(1)} is ${value}.`;
+  }
+  if (lang === 'pa') {
+    return `${label} ${value} ae.`;
+  }
+  return `${label} ${value} hai.`;
+};
+
+const buildFactSummarySentence = (lang = 'ur', factEntry = null) => {
+  if (!factEntry) {
+    return '';
+  }
+  const value = formatFactValue(factEntry.value);
+  if (!value) {
+    return '';
+  }
+
+  if (factEntry.key === 'city') {
+    if (lang === 'en') return `you are from ${value}`;
+    if (lang === 'pa') return `tusi ${value} ton ho`;
+    return `aap ${value} se hain`;
+  }
+
+  if (factEntry.key === 'likes') {
+    if (lang === 'en') return `you like ${value}`;
+    if (lang === 'pa') return `tuhanu ${value} pasand ae`;
+    return `aap ko ${value} pasand hai`;
+  }
+
+  const label = getFactLabelForReply(factEntry.key, lang, factEntry.label);
+  if (lang === 'en') {
+    return `${label} is ${value}`;
+  }
+  if (lang === 'pa') {
+    return `${label} ${value} ae`;
+  }
+  return `${label} ${value} hai`;
+};
+
+const buildRememberedSummaryReply = (text = '', memory) => {
+  const lang = detectLanguageStyle(text);
+  const summaryKeys = ['user_name', 'city', 'profession', 'age', 'birthday', 'likes'];
+  const summaryParts = summaryKeys
+    .map((key) => getStoredFact(memory, key))
+    .filter(Boolean)
+    .map((factEntry) => buildFactSummarySentence(lang, factEntry))
+    .filter(Boolean);
+
+  const favoriteFacts = Object.entries(memory.customFacts || {})
+    .filter(([key]) => key.startsWith('favorite_'))
+    .sort((a, b) => (b[1]?.updatedAt || 0) - (a[1]?.updatedAt || 0))
+    .slice(0, 2)
+    .map(([key, value]) => buildFactSummarySentence(lang, {
+      key,
+      label: value?.label || key.replace(/_/g, ' '),
+      value: value?.value,
+      category: value?.category || 'favorite',
+    }))
+    .filter(Boolean);
+
+  const rememberedNotes = (memory.notes || [])
+    .slice(0, 2)
+    .map((item) => cleanValue(item?.text || ''))
+    .filter(Boolean);
+
+  const factText = [...summaryParts, ...favoriteFacts].slice(0, 5).join(', ');
+  const noteText = rememberedNotes.join(', ');
+
+  if (!factText && !noteText) {
+    if (lang === 'en') return 'I do not have any saved personal details about you yet.';
+    if (lang === 'pa') return 'Mere kol haje tak tuhade bare koi saved personal detail nahi hai.';
+    return 'Abhi mere paas aap ke bare mein koi saved personal detail nahi hai.';
+  }
+
+  if (lang === 'en') {
+    if (factText && noteText) {
+      return `I remember this about you: ${factText}. You also asked me to remember: ${noteText}.`;
+    }
+    if (factText) {
+      return `I remember this about you: ${factText}.`;
+    }
+    return `You asked me to remember: ${noteText}.`;
+  }
+
+  if (lang === 'pa') {
+    if (factText && noteText) {
+      return `Mainu tuhade bare eh yaad ae: ${factText}. Tusi menu eh gallan vi yaad rakhhan nu keha si: ${noteText}.`;
+    }
+    if (factText) {
+      return `Mainu tuhade bare eh yaad ae: ${factText}.`;
+    }
+    return `Tusi menu eh gallan yaad rakhhan nu keha si: ${noteText}.`;
+  }
+
+  if (factText && noteText) {
+    return `Mujhe aap ke bare mein ye yaad hai: ${factText}. Aur aap ne mujhe ye baatein yaad rakhne ko kahi thi: ${noteText}.`;
+  }
+  if (factText) {
+    return `Mujhe aap ke bare mein ye yaad hai: ${factText}.`;
+  }
+  return `Aap ne mujhe ye baatein yaad rakhne ko kahi thi: ${noteText}.`;
+};
+
+const extractFavoriteFact = (text = '') => {
+  const englishMatch = text.match(/\bmy\s+(?:favorite|favourite)\s+([a-z][a-z\s]{1,24}?)\s+is\s+(.+)$/i);
+  const romanMatch = text.match(/\b(?:mera|meri)\s+(?:favorite|favourite|pasandeeda)\s+([a-z][a-z\s]{1,24}?)\s+(.+?)\s+hai$/i);
+  const match = englishMatch || romanMatch;
+  if (!match) {
+    return null;
+  }
+
+  const category = cleanValue(match[1]);
+  const value = cleanValue(match[2]);
+  if (!category || !value || looksLikeQuestionValue(category) || looksLikeQuestionValue(value)) {
+    return null;
+  }
+
+  return {
+    key: `favorite_${normalizeFactKey(category)}`,
+    label: `favorite ${category}`,
+    value,
+    category: 'favorite',
+  };
+};
+
+const extractStructuredPersonalFacts = (text = '') => {
+  if (SENSITIVE_MEMORY_PATTERN.test(text)) {
+    return [];
+  }
+
+  const facts = [];
+  const addFact = (fact) => {
+    if (!fact?.key || !fact?.value) {
+      return;
+    }
+    const exists = facts.some((item) => item.key === fact.key && formatFactValue(item.value) === formatFactValue(fact.value));
+    if (!exists) {
+      facts.push(fact);
+    }
+  };
+
+  const userName = extractByPatterns(text, [
+    /\b(?:mera|my)\s+(?:naam|name)\s+(?:is\s+)?(.+?)(?:\s+(?:aur|and)\b|[.!?]|$)/i,
+  ]);
+  if (userName) {
+    addFact({ key: 'user_name', label: 'aap ka naam', value: userName, category: 'identity' });
+  }
+
+  const birthday = extractByPatterns(text, [
+    /\b(?:meri|my)\s+(?:birthday|birth day|date of birth|dob)\s+(?:is\s+)?(.+?)(?:\s+(?:aur|and)\b|[.!?]|$)/i,
+    /\b(?:mera|my)\s+janamdin\s+(.+?)(?:\s+(?:aur|and)\b|[.!?]|$)/i,
+  ]);
+  if (birthday) {
+    addFact({ key: 'birthday', label: 'aap ka birthday', value: birthday, category: 'identity' });
+  }
+
+  const age = extractByPatterns(text, [
+    /\b(?:meri|my)\s+(?:age|umar|umr)\s+(?:is\s+)?(.+?)(?:\s+(?:aur|and)\b|[.!?]|$)/i,
+    /\b(?:i am|i'm)\s+(\d{1,3})\s+(?:years?\s+old|year\s+old)\b/i,
+  ]);
+  if (age) {
+    addFact({ key: 'age', label: 'aap ki age', value: age, category: 'identity' });
+  }
+
+  const city = extractByPatterns(text, [
+    /\b(?:main|mai|mein)\s+(.+?)\s+se\s+hoon\b/i,
+    /\b(?:i am|i'm)\s+from\s+(.+)$/i,
+    /\b(?:mera|my)\s+(?:city|shehar|shahar)\s+(?:is\s+)?(.+)$/i,
+  ]);
+  if (city) {
+    addFact({ key: 'city', label: 'aap ka shehar', value: city, category: 'identity' });
+  }
+
+  const profession = extractByPatterns(text, [
+    /\b(?:mera|my)\s+(?:job|profession|kaam|work)\s+(?:is\s+)?(.+?)(?:\s+(?:aur|and)\b|[.!?]|$)/i,
+  ]);
+  if (profession) {
+    addFact({ key: 'profession', label: 'aap ka kaam', value: profession, category: 'identity' });
+  }
+
+  const likedThing = extractByPatterns(text, [
+    /\b(?:mujhe|muje|mujhay)\s+(.+?)\s+pasand\s+hai\b/i,
+    /\bi like\s+(.+)$/i,
+  ]);
+  if (likedThing) {
+    addFact({ key: 'likes', label: 'aap ki pasand', value: likedThing, category: 'preferences', mode: 'list' });
+  }
+
+  const favoriteFact = extractFavoriteFact(text);
+  if (favoriteFact) {
+    addFact(favoriteFact);
+  }
+
+  return facts;
+};
+
+const askMyName = (text = '') =>
+  /\b(?:mera|my)\s+(?:naam|name)\s+(?:kya hai|yaad hai)\b|what(?:'s| is)\s+my\s+name\b|do you know my name/i.test(text);
+
+const askMyBirthday = (text = '') =>
+  /\b(?:mera|my)\s+(?:birthday|birth day|date of birth|dob|janamdin)\s+(?:kab hai|kya hai|yaad hai)\b|when is my birthday\b|do you remember my birthday/i.test(text);
+
+const askMyAge = (text = '') =>
+  /\b(?:meri|my)\s+(?:age|umar|umr)\s+(?:kitni hai|kya hai|yaad hai)\b|how old am i\b|do you know my age/i.test(text);
+
+const askMyCity = (text = '') =>
+  /\b(?:main|mai|mein)\s+kaha(?:n)?\s+se\s+hoon\b|\b(?:mera|my)\s+(?:city|shehar|shahar)\s+(?:kya hai|yaad hai)\b|where am i from\b/i.test(text);
+
+const askMyProfession = (text = '') =>
+  /\bmain\s+kya\s+kaam\s+karta\s+hoon\b|\bmain\s+kya\s+kaam\s+karti\s+hoon\b|\b(?:mera|my)\s+(?:job|profession|kaam|work)\s+(?:kya hai|yaad hai)\b|what do i do\b/i.test(text);
+
+const askMyLikes = (text = '') =>
+  /\b(?:mujhe|muje|mujhay)\s+kya\s+pasand\s+hai\b|what do i like\b/i.test(text);
+
+const askFavoriteFactKey = (text = '') => {
+  const romanMatch = text.match(/\b(?:mera|meri)\s+(?:favorite|favourite|pasandeeda)\s+([a-z][a-z\s]{1,24}?)\s+(?:kya hai|yaad hai)\b/i);
+  const englishMatch = text.match(/\bwhat\s+is\s+my\s+(?:favorite|favourite)\s+([a-z][a-z\s]{1,24})\b/i);
+  const match = romanMatch || englishMatch;
+  if (!match) {
+    return '';
+  }
+
+  return `favorite_${normalizeFactKey(match[1])}`;
+};
+
+const askAboutMe = (text = '') =>
+  /\b(?:mere|meri|my)\s+(?:bare|baare)\s+(?:mein|me)\s+kya\s+(?:yaad|pata)\s+hai\b|what do you (?:remember|know) about me\b|tell me about myself/i.test(text);
+
 const detectLanguageStyle = (text = '') => {
   if (/[\u0600-\u06FF]/.test(text)) return 'ur';
   if (/[\u0A00-\u0A7F]/.test(text)) return 'pa';
-  if (/\b(who|made|create|created|built|developer|company|ceo|approval|guidance)\b/i.test(text)) return 'en';
   if (/\b(tusi|tuhanu|tuhanun|tuhada|sadi|sada|kinne)\b/i.test(text)) return 'pa';
+  if (/\b(main|mai|mein|mera|meri|mere|mujhe|muje|mujhay|aap|hai|hoon|hun|kya|yaad|naam|janamdin|shehar|shahar|pasand|kaam)\b/i.test(text)) return 'ur';
+  if (/\b(who|what|when|where|why|how|made|create|created|built|developer|company|ceo|approval|guidance|remember|know|birthday|name|age|city|favorite|favourite|like|job|profession)\b/i.test(text)) return 'en';
   return 'ur';
 };
 
@@ -259,7 +946,7 @@ const extractWordDigits = (text = '') => {
   return digits;
 };
 
-const textContainsPin = (text = '', pin = '1598') => {
+const textContainsPin = (text = '', pin = DEMO_OWNER_PIN) => {
   if (!text || !pin) return false;
   const numeric = String(text).replace(/\D/g, '');
   if (numeric.includes(pin)) return true;
@@ -280,7 +967,7 @@ export const processLocalMemoryCommand = async (userText) => {
   const lower = normalize(text);
   const memory = await loadLocalMemory();
   const now = Date.now();
-  const hasPin = textContainsPin(text, memory.security?.ownerPin || '1598');
+  const hasPin = textContainsPin(text, memory.security?.ownerPin || DEMO_OWNER_PIN);
   const isSessionUnlocked = Number(memory.security?.unlockUntil || 0) > now;
   const hasOwnerValidation = hasNabeelValidation(text);
   const isPrivateAuthorized = hasOwnerValidation || hasPin || isSessionUnlocked;
@@ -351,11 +1038,60 @@ export const processLocalMemoryCommand = async (userText) => {
     return { handled: true, mood: 'HAPPY', text: 'Theek hai, maine sister ka naam local memory mein save kar liya hai.' };
   }
 
+  const structuredFacts = extractStructuredPersonalFacts(text);
+  if (structuredFacts.length) {
+    structuredFacts.forEach((fact) => {
+      if (fact.mode === 'list') {
+        rememberListFact(memory, fact);
+        return;
+      }
+      rememberCustomFact(memory, fact);
+    });
+    const followUpPrompt = getCompanionFollowUpPrompt(memory, text, structuredFacts.map((fact) => fact.key));
+    await saveLocalMemory(memory);
+    return {
+      handled: true,
+      mood: 'HAPPY',
+      text: mergeAssistantReplies(buildFactSaveReply(text, structuredFacts), followUpPrompt),
+    };
+  }
+
   const genericFact = extractGenericFact(text);
   if (genericFact) {
-    memory.customFacts[genericFact.key] = { label: genericFact.label, value: genericFact.value };
+    rememberCustomFact(memory, {
+      key: genericFact.key,
+      label: genericFact.label,
+      value: genericFact.value,
+      category: 'general',
+    });
+    const followUpPrompt = getCompanionFollowUpPrompt(memory, text, [genericFact.key]);
     await saveLocalMemory(memory);
-    return { handled: true, mood: 'HAPPY', text: `${genericFact.label} ka naam yaad rakh liya hai.` };
+    return {
+      handled: true,
+      mood: 'HAPPY',
+      text: mergeAssistantReplies(`${genericFact.label} ka naam yaad rakh liya hai.`, followUpPrompt),
+    };
+  }
+
+  const pendingCompanionKey = memory.companionSetup?.pendingFactKey || '';
+  const pendingCompanionAnswer = parsePendingCompanionAnswer(pendingCompanionKey, text);
+  if (pendingCompanionAnswer?.invalid) {
+    return { handled: true, mood: 'SAD', text: buildCompanionRetryPrompt(pendingCompanionKey, text) };
+  }
+
+  if (pendingCompanionAnswer?.key) {
+    if (pendingCompanionAnswer.mode === 'list') {
+      rememberListFact(memory, pendingCompanionAnswer);
+    } else {
+      rememberCustomFact(memory, pendingCompanionAnswer);
+    }
+    const followUpPrompt = getCompanionFollowUpPrompt(memory, text, [pendingCompanionAnswer.key]);
+    await saveLocalMemory(memory);
+    return {
+      handled: true,
+      mood: 'HAPPY',
+      text: mergeAssistantReplies(buildFactSaveReply(text, [pendingCompanionAnswer]), followUpPrompt),
+    };
   }
 
   if (askMomName(text)) {
@@ -380,6 +1116,67 @@ export const processLocalMemoryCommand = async (userText) => {
       return { handled: true, mood: 'SAD', text: 'Aap ne sister ka naam abhi save nahi kiya.' };
     }
     return { handled: true, mood: 'HAPPY', text: `Aap ki sister ka naam ${memory.privateFacts.sisterName} hai.` };
+  }
+
+  if (askMyName(text)) {
+    const factEntry = getStoredFact(memory, 'user_name');
+    if (!factEntry) {
+      return { handled: true, mood: 'SAD', text: buildFactMissingReply(text, 'user_name') };
+    }
+    return { handled: true, mood: 'HAPPY', text: buildFactRecallReply(text, factEntry) };
+  }
+
+  if (askMyBirthday(text)) {
+    const factEntry = getStoredFact(memory, 'birthday');
+    if (!factEntry) {
+      return { handled: true, mood: 'SAD', text: buildFactMissingReply(text, 'birthday') };
+    }
+    return { handled: true, mood: 'HAPPY', text: buildFactRecallReply(text, factEntry) };
+  }
+
+  if (askMyAge(text)) {
+    const factEntry = getStoredFact(memory, 'age');
+    if (!factEntry) {
+      return { handled: true, mood: 'SAD', text: buildFactMissingReply(text, 'age') };
+    }
+    return { handled: true, mood: 'HAPPY', text: buildFactRecallReply(text, factEntry) };
+  }
+
+  if (askMyCity(text)) {
+    const factEntry = getStoredFact(memory, 'city');
+    if (!factEntry) {
+      return { handled: true, mood: 'SAD', text: buildFactMissingReply(text, 'city') };
+    }
+    return { handled: true, mood: 'HAPPY', text: buildFactRecallReply(text, factEntry) };
+  }
+
+  if (askMyProfession(text)) {
+    const factEntry = getStoredFact(memory, 'profession');
+    if (!factEntry) {
+      return { handled: true, mood: 'SAD', text: buildFactMissingReply(text, 'profession') };
+    }
+    return { handled: true, mood: 'HAPPY', text: buildFactRecallReply(text, factEntry) };
+  }
+
+  if (askMyLikes(text)) {
+    const factEntry = getStoredFact(memory, 'likes');
+    if (!factEntry) {
+      return { handled: true, mood: 'SAD', text: buildFactMissingReply(text, 'likes') };
+    }
+    return { handled: true, mood: 'HAPPY', text: buildFactRecallReply(text, factEntry) };
+  }
+
+  const favoriteFactKey = askFavoriteFactKey(text);
+  if (favoriteFactKey) {
+    const factEntry = getStoredFact(memory, favoriteFactKey);
+    if (!factEntry) {
+      return { handled: true, mood: 'SAD', text: buildFactMissingReply(text, favoriteFactKey) };
+    }
+    return { handled: true, mood: 'HAPPY', text: buildFactRecallReply(text, factEntry) };
+  }
+
+  if (askAboutMe(text)) {
+    return { handled: true, mood: 'HAPPY', text: buildRememberedSummaryReply(text, memory) };
   }
 
   if (askBrothers(text)) {
@@ -417,11 +1214,7 @@ export const processLocalMemoryCommand = async (userText) => {
   }
 
   if (askRemembered(text)) {
-    if (!memory.notes.length) {
-      return { handled: true, mood: 'SAD', text: 'Abhi aap ne koi specific baat yaad rakhne ko nahi kahi.' };
-    }
-    const list = memory.notes.slice(0, 4).map((item, idx) => `${idx + 1}. ${item.text}`).join(' ');
-    return { handled: true, mood: 'HAPPY', text: `Aap ne mujhe ye baatein yaad rakhne ko kahi hain: ${list}` };
+    return { handled: true, mood: 'HAPPY', text: buildRememberedSummaryReply(text, memory) };
   }
 
   return { handled: false };
