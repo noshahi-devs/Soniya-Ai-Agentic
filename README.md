@@ -576,3 +576,5 @@ A fully private AI mobile agent that:
 
 
 npm install --global eas-cli && npx create-expo-app soniya-agentic-ai-mobile-app && cd soniya-agentic-ai-mobile-app && eas init --id 76988dca-2391-4be3-a376-509a997e3013
+
+Play Protect / release guidance: docs/PLAY_PROTECT.md

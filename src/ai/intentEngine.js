@@ -11,7 +11,7 @@ const cleanupAppQuery = (value = '') => (
 const YES_PATTERNS = ['haan', 'han', 'yes', 'read it', 'sunao', 'sunao'];
 const NO_PATTERNS = ['no', 'nahi', 'ignore', 'skip'];
 const SEND_PATTERNS = ['send', 'bhej do', 'message bhej do', 'confirm send'];
-const OPEN_APP_PATTERN = '(?:kholo|khol do|kholdo|kholna|open karo|open kar do|open kr do|open krdo|open|launch karo|launch kar do|launch kr do|launch)';
+const OPEN_APP_PATTERN = '(?:kholo|khol do|kholdo|kholna|open karo|open kar do|open kr do|open krdo|open|launch karo|launch kar do|launch kr do|launch|chalao|chala do|chala do na|start karo|start kar do|start kr do|start krdo|run karo|run kar do|run kr do|run krdo)';
 const CALL_PATTERN = '(?:call karo|call kar do|call kr do|call krdo|phone karo|dial karo|line milao|call|phone|dial)';
 const SCROLL_PATTERN = '(?:scroll karo|scroll kar do|scroll kr do|scroll krdo|niche jao|upar jao|scroll)';
 const SEARCH_PATTERN = '(?:search karo|search kar do|search|pata karo|search kr do|search krdo|find)';

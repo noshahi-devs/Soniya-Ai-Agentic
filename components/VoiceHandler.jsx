@@ -340,7 +340,7 @@ const VoiceHandler = ({ onSpeechResult, disabled = false, onListenStart, onListe
         if (isListening) {
             return {
                 label: 'LIVE',
-                title: 'AI voice core is listening',
+                title: 'Soniya sun rahi hai',
                 subtitle: `Boliye, short silence ke baad auto send hoga (${recognitionLangRef.current}).`,
                 preview: 'Aap ki awaaz real time capture ho rahi hai.',
                 buttonColors: ['#fb7185', '#ec4899', '#7c3aed'],
@@ -349,7 +349,7 @@ const VoiceHandler = ({ onSpeechResult, disabled = false, onListenStart, onListe
                 ringColor: 'rgba(244,114,182,0.5)',
                 badgeColor: 'rgba(244,114,182,0.18)',
                 icon: 'radio',
-                hint: 'Tap to stop',
+                hint: 'Dobara tap to stop',
             };
         }
 
@@ -444,7 +444,7 @@ const VoiceHandler = ({ onSpeechResult, disabled = false, onListenStart, onListe
     const compactButtonLabel = !speechRecognitionAvailable
         ? 'VOICE OFF'
         : isListening
-            ? 'LISTENING'
+            ? 'SONIYA SUN RAHI HAI'
             : isStarting
                 ? 'STARTING'
                 : disabled

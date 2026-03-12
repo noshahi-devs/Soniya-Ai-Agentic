@@ -12,8 +12,8 @@ import {
   Switch,
   Text,
   TextInput,
+  Pressable,
   TouchableOpacity,
-  TouchableWithoutFeedback,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -478,92 +478,92 @@ export default function SoniyaCompanionScreen() {
       <SafeAreaView style={styles.safeArea}>
         <StatusBar barStyle="light-content" />
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          enabled={Platform.OS === 'ios'}
           style={{ flex: 1 }}
           keyboardVerticalOffset={Platform.OS === 'android' ? 25 : 0}
         >
-          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-            <LinearGradient colors={['#06131f', '#13203e', '#3c1326']} style={styles.background}>
-              <View style={styles.topBar}>
-                <View>
-                  <Text style={styles.brandEyebrow}>Companion Mode</Text>
-                  <Text style={styles.brandTitle}>{APP_NAME}</Text>
+          <LinearGradient colors={['#06131f', '#13203e', '#3c1326']} style={styles.background}>
+            <Pressable style={StyleSheet.absoluteFillObject} onPress={Keyboard.dismiss} />
+            <View style={styles.topBar}>
+              <View>
+                <Text style={styles.brandEyebrow}>Companion Mode</Text>
+                <Text style={styles.brandTitle}>{APP_NAME}</Text>
+              </View>
+              <TouchableOpacity
+                activeOpacity={0.9}
+                style={styles.utilityButton}
+                onPress={() => setUtilityVisible(true)}
+              >
+                <Ionicons name="grid-outline" size={18} color="#fff8fb" />
+                <Text style={styles.utilityButtonText}>Utility</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.heroSection}>
+              <View style={styles.heroGlow} />
+              <View style={styles.avatarStage}>
+                <View style={styles.avatarFrame}>
+                  <SoniyaAvatar
+                    mood={assistantMood}
+                    isSpeaking={isSpeaking}
+                    isThinking={isThinking}
+                    viewType="FULL"
+                    activityMode={activityMode}
+                    styleVariant={assistantMood === 'SAD' ? 'CASUAL' : 'ELEGANT'}
+                    autoModeEnabled
+                    pinToBottom
+                  />
                 </View>
+              </View>
+
+              <View style={styles.heroOverlay}>
+                <View style={styles.speechCard}>
+                  <Text style={styles.speechLabel}>Soniya</Text>
+                  <Text numberOfLines={4} style={styles.speechText}>{statusText}</Text>
+                </View>
+
+                <View style={styles.heroMetaRow}>
+                  <StatusPill
+                    label={`${unreadCount} unread`}
+                    accent={unreadCount > 0}
+                    icon="mail-unread-outline"
+                  />
+                  <StatusPill
+                    label={sessionUnlocked ? 'Unlocked' : 'Locked'}
+                    accent={sessionUnlocked}
+                    icon="shield-checkmark-outline"
+                  />
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.bottomDock}>
+              <View style={styles.composerRow}>
+                <TextInput
+                  value={composerText}
+                  onChangeText={setComposerText}
+                  placeholder="Type a message..."
+                  placeholderTextColor="#8ea0b7"
+                  style={styles.composerInput}
+                />
                 <TouchableOpacity
                   activeOpacity={0.9}
-                  style={styles.utilityButton}
-                  onPress={() => setUtilityVisible(true)}
+                  style={styles.sendButton}
+                  onPress={() => submitPrompt()}
                 >
-                  <Ionicons name="grid-outline" size={18} color="#fff8fb" />
-                  <Text style={styles.utilityButtonText}>Utility</Text>
+                  <Ionicons name="arrow-up" size={18} color="#082c2f" />
                 </TouchableOpacity>
               </View>
 
-              <View style={styles.heroSection}>
-                <View style={styles.heroGlow} />
-                <View style={styles.avatarStage}>
-                  <View style={styles.avatarFrame}>
-                    <SoniyaAvatar
-                      mood={assistantMood}
-                      isSpeaking={isSpeaking}
-                      isThinking={isThinking}
-                      viewType="FULL"
-                      activityMode={activityMode}
-                      styleVariant={assistantMood === 'SAD' ? 'CASUAL' : 'ELEGANT'}
-                      autoModeEnabled
-                      pinToBottom
-                    />
-                  </View>
-                </View>
-
-                <View style={styles.heroOverlay}>
-                  <View style={styles.speechCard}>
-                    <Text style={styles.speechLabel}>Soniya</Text>
-                    <Text numberOfLines={4} style={styles.speechText}>{statusText}</Text>
-                  </View>
-
-                  <View style={styles.heroMetaRow}>
-                    <StatusPill
-                      label={`${unreadCount} unread`}
-                      accent={unreadCount > 0}
-                      icon="mail-unread-outline"
-                    />
-                    <StatusPill
-                      label={sessionUnlocked ? 'Unlocked' : 'Locked'}
-                      accent={sessionUnlocked}
-                      icon="shield-checkmark-outline"
-                    />
-                  </View>
-                </View>
+              <View style={styles.micActionRow}>
+                <VoiceHandler
+                  onSpeechResult={handleVoiceResult}
+                  showLabel={true}
+                />
               </View>
-
-              <View style={styles.bottomDock}>
-                <View style={styles.composerRow}>
-                  <TextInput
-                    value={composerText}
-                    onChangeText={setComposerText}
-                    placeholder="Type a message..."
-                    placeholderTextColor="#8ea0b7"
-                    style={styles.composerInput}
-                  />
-                  <TouchableOpacity
-                    activeOpacity={0.9}
-                    style={styles.sendButton}
-                    onPress={() => submitPrompt()}
-                  >
-                    <Ionicons name="arrow-up" size={18} color="#082c2f" />
-                  </TouchableOpacity>
-                </View>
-
-                <View style={styles.micActionRow}>
-                  <VoiceHandler
-                    onSpeechResult={handleVoiceResult}
-                    showLabel={true}
-                  />
-                </View>
-              </View>
-            </LinearGradient>
-          </TouchableWithoutFeedback>
+            </View>
+          </LinearGradient>
         </KeyboardAvoidingView>
       </SafeAreaView>
       <Modal
@@ -980,11 +980,17 @@ const styles = StyleSheet.create({
     height: '56%',
     borderRadius: 200,
     backgroundColor: 'rgba(250, 114, 182, 0.16)',
+    zIndex: 0,
   },
   avatarStage: {
-    flex: 1,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     justifyContent: 'flex-end',
     alignItems: 'center',
+    zIndex: 1,
     // Removed overflow: 'hidden' to prevent clipping Soniya's head when scaled
   },
   avatarFrame: {
@@ -1000,6 +1006,7 @@ const styles = StyleSheet.create({
     left: 16,
     right: 16,
     gap: 10,
+    zIndex: 2,
   },
   speechCard: {
     alignSelf: 'flex-start',
@@ -1177,6 +1184,9 @@ const styles = StyleSheet.create({
     borderRadius: 26,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: '#bafaf3',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.25)',
   },
   actionsRow: {
     marginTop: 10,

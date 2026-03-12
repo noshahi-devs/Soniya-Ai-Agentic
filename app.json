@@ -9,9 +9,9 @@
     "orientation": "portrait",
     "icon": "./assets/images/android-icon-foreground.png",
     "splash": {
-      "image": "./assets/images/android-icon-foreground.png",
-      "resizeMode": "cover",
-      "backgroundColor": "#693F4A"
+      "image": "./assets/images/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#050111"
     },
     "scheme": "soniyaagenticai",
     "userInterfaceStyle": "automatic",
@@ -58,10 +58,10 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/android-icon-foreground.png",
-          "resizeMode": "cover",
-          "backgroundColor": "#090979",
-          "imageWidth": 1080
+          "image": "./assets/images/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#050111",
+          "imageWidth": 1200
         }
       ],
       "expo-speech-recognition",
